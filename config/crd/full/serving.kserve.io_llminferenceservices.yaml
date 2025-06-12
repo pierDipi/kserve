@@ -19557,8 +19557,6 @@ spec:
                 required:
                 - containers
                 type: object
-            required:
-            - model
             type: object
           status:
             properties:
