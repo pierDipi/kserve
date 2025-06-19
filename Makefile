@@ -31,7 +31,7 @@ CRD_OPTIONS ?= "crd:maxDescLen=0"
 KSERVE_ENABLE_SELF_SIGNED_CA ?= false
 
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION = 1.29
+ENVTEST_K8S_VERSION = 1.33
 
 ENGINE ?= docker
 # Empty string for local build when using podman, it allows to build different architectures
