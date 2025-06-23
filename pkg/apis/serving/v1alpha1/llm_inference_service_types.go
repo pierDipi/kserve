@@ -59,6 +59,7 @@ type LLMInferenceServiceConfig struct {
 // LLMInferenceServiceSpec defines the desired state of LLMInferenceService.
 type LLMInferenceServiceSpec struct {
 	// Model specification, including its URI, potential LoRA adapters, and storage details.
+	// It's optional for `LLMInferenceServiceConfig` kind.
 	// +optional
 	Model LLMModelSpec `json:"model"`
 
