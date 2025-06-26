@@ -130,3 +130,11 @@ func (p *InferencePoolSpec) HasRef() bool {
 func (r *HTTPRouteSpec) HasRefs() bool {
 	return r != nil && len(r.Refs) > 0
 }
+
+func (p *ParallelismSpec) IsPipelineParallel() bool {
+	return p != nil && p.Pipeline != nil && *p.Pipeline > 0
+}
+
+func (p *ParallelismSpec) IsTensorParallel() bool {
+	return p != nil && p.Tensor != nil && *p.Tensor > 0
+}

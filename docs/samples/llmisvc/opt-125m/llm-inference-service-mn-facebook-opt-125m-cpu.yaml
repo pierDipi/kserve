@@ -1,0 +1,18 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: facebook-opt-125m-single
+spec:
+  model:
+    uri: hf://facebook/opt-125m
+    name: facebook/opt-125m
+  replicas: 1
+  router:
+    scheduler: {}
+  template:
+    containers:
+      - name: main
+        image: quay.io/rh-aiservices-bu/vllm-cpu-openai-ubi9:0.3
+  parallelism:
+    pipeline: 1
+  worker: {}
