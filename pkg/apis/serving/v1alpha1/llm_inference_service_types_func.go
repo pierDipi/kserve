@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"strings"
+
 	"k8s.io/utils/ptr"
 	"knative.dev/pkg/kmeta"
 )
@@ -88,4 +90,9 @@ func (p *ParallelismSpec) GetSize() *int32 {
 		return p.Pipeline
 	}
 	return nil
+}
+
+func (s *LLMInferenceService) IsNetworkPoliciesDisabled() bool {
+	v, ok := s.Annotations["security.opendatahub.io/enable-network-policies"]
+	return ok && strings.EqualFold(v, "false")
 }
