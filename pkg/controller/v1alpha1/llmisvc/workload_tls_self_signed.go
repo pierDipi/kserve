@@ -45,13 +45,22 @@ const (
 
 	// Annotation to track certificate expiration
 	certificatesExpirationAnnotation = "certificates.kserve.io/expiration"
+
+	selfSignedCertificateSecretSuffix = "-kserve-self-signed-certs" //nolint:gosec
 )
 
 // reconcileSelfSignedCertsSecret reconciles the secret containing self-signed certs used by the server to serve TLS.
-// These self signed certs are used for cluster internal communication encryption by the workload and the scheduler.
+// These self-signed certs are used for cluster internal communication encryption by the workload and the scheduler.
 // The certificates are automatically renewed before expiration to ensure continuous secure communication.
-func (r *LLMISVCReconciler) reconcileSelfSignedCertsSecret(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) error {
+func (r *LLMISVCReconciler) reconcileSelfSignedCertsSecret(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, config *Config) error {
 	log.FromContext(ctx).Info("Reconciling self-signed certificates secret")
+
+	if config.CertManagerConfig.IsEnabled() {
+		return Delete(ctx, r, llmSvc, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+			Name:      kmeta.ChildName(llmSvc.GetName(), selfSignedCertificateSecretSuffix),
+			Namespace: llmSvc.GetNamespace(),
+		}})
+	}
 
 	// Generating a new certificate is quite slow and expensive as it generates a new certificate, check if the current
 	// self-signed certificate (if any) is expired before creating a new one.
@@ -82,7 +91,7 @@ func (r *LLMISVCReconciler) expectedSelfSignedCertsSecret(llmSvc *v1alpha1.LLMIn
 
 	expected := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      kmeta.ChildName(llmSvc.GetName(), "-kserve-self-signed-certs"),
+			Name:      kmeta.ChildName(llmSvc.GetName(), selfSignedCertificateSecretSuffix),
 			Namespace: llmSvc.GetNamespace(),
 			Labels: map[string]string{
 				"app.kubernetes.io/component": "llminferenceservice-workload",
@@ -150,7 +159,7 @@ func createSelfSignedTLSCertificate() ([]byte, []byte, error) {
 
 func (r *LLMISVCReconciler) getExistingSelfSignedCertificate(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) *corev1.Secret {
 	curr := &corev1.Secret{}
-	key := client.ObjectKey{Namespace: llmSvc.GetNamespace(), Name: kmeta.ChildName(llmSvc.GetName(), "-kserve-self-signed-certs")}
+	key := client.ObjectKey{Namespace: llmSvc.GetNamespace(), Name: kmeta.ChildName(llmSvc.GetName(), selfSignedCertificateSecretSuffix)}
 	err := r.Client.Get(ctx, key, curr)
 	if err != nil {
 		return nil

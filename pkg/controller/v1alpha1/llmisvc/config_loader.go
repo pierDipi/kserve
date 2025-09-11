@@ -36,6 +36,9 @@ type Config struct {
 	IngressGatewayName      string `json:"ingressGatewayName,omitempty"`
 	IngressGatewayNamespace string `json:"ingressGatewayNamespace,omitempty"`
 
+	CertManagerConfig *v1beta1.CertManagerConfig `json:"certManagerConfig,omitempty"`
+	TLSSecretSuffix   string                     `json:"TLSSecretSuffix,omitempty"`
+
 	// Storage and credential configs are excluded from JSON serialization
 	// as they contain sensitive information
 	StorageConfig    *types.StorageInitializerConfig `json:"-"`
@@ -44,7 +47,7 @@ type Config struct {
 
 // NewConfig creates an instance of llm-specific config based on predefined values
 // in IngressConfig struct
-func NewConfig(ingressConfig *v1beta1.IngressConfig, storageConfig *types.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) *Config {
+func NewConfig(ingressConfig *v1beta1.IngressConfig, storageConfig *types.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig, certManagerConfig *v1beta1.CertManagerConfig) *Config {
 	igwNs := constants.KServeNamespace
 	igwName := ingressConfig.KserveIngressGateway
 	// Parse gateway name to extract namespace and name components
@@ -55,12 +58,19 @@ func NewConfig(ingressConfig *v1beta1.IngressConfig, storageConfig *types.Storag
 		igwName = igw[1]
 	}
 
+	tlsSecretSuffix := selfSignedCertificateSecretSuffix
+	if certManagerConfig.IsEnabled() {
+		tlsSecretSuffix = certManagerSecretSuffix
+	}
+
 	return &Config{
 		SystemNamespace:         constants.KServeNamespace,
 		IngressGatewayNamespace: igwNs,
 		IngressGatewayName:      igwName,
 		StorageConfig:           storageConfig,
 		CredentialConfig:        credentialConfig,
+		CertManagerConfig:       certManagerConfig,
+		TLSSecretSuffix:         tlsSecretSuffix,
 	}
 }
 
@@ -88,5 +98,10 @@ func LoadConfig(ctx context.Context, clientset kubernetes.Interface) (*Config, e
 		return nil, fmt.Errorf("failed to convert InferenceServiceConfigMap to CredentialConfig: %w", errConvert)
 	}
 
-	return NewConfig(ingressConfig, storageInitializerConfig, &credentialConfig), nil
+	certManagerConfig, errConvert := v1beta1.NewCertManagerConfig(isvcConfigMap)
+	if errConvert != nil {
+		return nil, fmt.Errorf("failed to convert InferenceServiceConfigMap to CertManagerConfig: %w", errConvert)
+	}
+
+	return NewConfig(ingressConfig, storageInitializerConfig, &credentialConfig, certManagerConfig), nil
 }

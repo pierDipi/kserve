@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	certmanagerapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	lwsapi "sigs.k8s.io/lws/api/leaderworkerset/v1"
@@ -55,13 +56,17 @@ import (
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 )
 
-// childResourcesPredicate filters events to only those from resources owned by LLMInferenceService
-// This prevents unnecessary reconciliation triggers from unrelated resources
-var childResourcesPredicate, _ = predicate.LabelSelectorPredicate(metav1.LabelSelector{
+var childResourcesSelector = metav1.LabelSelector{
 	MatchLabels: map[string]string{
 		"app.kubernetes.io/part-of": "llminferenceservice",
 	},
-})
+}
+
+var ChildResourcesSelector, _ = metav1.LabelSelectorAsSelector(&childResourcesSelector)
+
+// childResourcesPredicate filters events to only those from resources owned by LLMInferenceService
+// This prevents unnecessary reconciliation triggers from unrelated resources
+var childResourcesPredicate, _ = predicate.LabelSelectorPredicate(childResourcesSelector)
 
 // LLMISVCReconciler reconciles an LLMInferenceService object.
 // It orchestrates the reconciliation of child resources based on the spec.
@@ -235,6 +240,7 @@ func (r *LLMISVCReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.LLMInferenceService{}).
 		Watches(&v1alpha1.LLMInferenceServiceConfig{}, r.enqueueOnLLMInferenceServiceConfigChange(logger)).
+		Watches(&corev1.Pod{}, r.enqueueOnLLMInferenceServicePodChange()).
 		Owns(&netv1.Ingress{}, builder.WithPredicates(childResourcesPredicate)).
 		Owns(&appsv1.Deployment{}, builder.WithPredicates(childResourcesPredicate)).
 		Owns(&corev1.Secret{}, builder.WithPredicates(childResourcesPredicate)).
@@ -265,6 +271,13 @@ func (r *LLMISVCReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	if ok, err := utils.IsCrdAvailable(mgr.GetConfig(), lwsapi.GroupVersion.String(), "LeaderWorkerSet"); ok && err == nil {
 		b = b.Owns(&lwsapi.LeaderWorkerSet{}, builder.WithPredicates(childResourcesPredicate))
+	}
+
+	if err := certmanagerapi.AddToScheme(mgr.GetScheme()); err != nil {
+		return fmt.Errorf("failed to add cert-manager APIs to scheme: %w", err)
+	}
+	if ok, err := utils.IsCrdAvailable(mgr.GetConfig(), certmanagerapi.SchemeGroupVersion.String(), "Certificate"); ok && err == nil {
+		b = b.Owns(&certmanagerapi.Certificate{}, builder.WithPredicates(childResourcesPredicate))
 	}
 
 	return b.Complete(r)
@@ -384,5 +397,22 @@ func (r *LLMISVCReconciler) enqueueOnLLMInferenceServiceConfigChange(logger logr
 		}
 
 		return reqs
+	})
+}
+
+func (r *LLMISVCReconciler) enqueueOnLLMInferenceServicePodChange() handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
+		sub := object.(*corev1.Pod)
+
+		if name, ok := sub.Labels["app.kubernetes.io/name"]; ok {
+			return []reconcile.Request{
+				{NamespacedName: types.NamespacedName{
+					Namespace: sub.Namespace,
+					Name:      name,
+				}},
+			}
+		}
+
+		return nil
 	})
 }

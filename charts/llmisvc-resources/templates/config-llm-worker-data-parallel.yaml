@@ -218,7 +218,7 @@ spec:
         name: model-cache
       - name: tls-certs
         secret:
-          secretName: "{{ ChildName .ObjectMeta.Name `-kserve-self-signed-certs` }}"
+          secretName: "{{ ChildName .ObjectMeta.Name .GlobalConfig.TLSSecretSuffix }}"
   worker:
     containers:
       - image: ghcr.io/llm-d/llm-d-dev:v0.2.2
@@ -416,4 +416,4 @@ spec:
         name: model-cache
       - name: tls-certs
         secret:
-          secretName: "{{ ChildName .ObjectMeta.Name `-kserve-self-signed-certs` }}"
+          secretName: "{{ ChildName .ObjectMeta.Name .GlobalConfig.TLSSecretSuffix }}"

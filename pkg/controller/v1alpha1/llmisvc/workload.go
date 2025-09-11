@@ -56,9 +56,13 @@ func (r *LLMISVCReconciler) reconcileWorkload(ctx context.Context, llmSvc *v1alp
 	defer llmSvc.DetermineWorkloadReadiness()
 
 	// Set up TLS certificates for secure communication
-	if err := r.reconcileSelfSignedCertsSecret(ctx, llmSvc); err != nil {
+	if err := r.reconcileSelfSignedCertsSecret(ctx, llmSvc, config); err != nil {
 		llmSvc.MarkMainWorkloadNotReady("ReconcileCertsError", err.Error())
 		return fmt.Errorf("failed to reconcile self-signed certificates secret: %w", err)
+	}
+	if err := r.reconcileCertManagerCertificate(ctx, llmSvc, config); err != nil {
+		llmSvc.MarkMainWorkloadNotReady("ReconcileCertsError", err.Error())
+		return fmt.Errorf("failed to reconcile cert-manager certificate: %w", err)
 	}
 
 	// We need to always reconcile every type of workload to handle transitions from P/D to another topology (meaning

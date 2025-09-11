@@ -43,6 +43,7 @@ const (
 	DeployConfigName                   = "deploy"
 	LocalModelConfigName               = "localModel"
 	SecurityConfigName                 = "security"
+	CertManagerConfigName              = "certManager"
 	ServiceConfigName                  = "service"
 	ResourceConfigName                 = "resource"
 	MultiNodeConfigKeyName             = "multiNode"
@@ -172,6 +173,27 @@ type ResourceConfig struct {
 // +kubebuilder:object:generate=false
 type SecurityConfig struct {
 	AutoMountServiceAccountToken bool `json:"autoMountServiceAccountToken"`
+}
+
+type CertManagerConfig struct {
+	Enabled     bool            `json:"enabled,omitempty"`
+	IssuerKind  string          `json:"issuerKind,omitempty"`
+	IssuerGroup string          `json:"issuerGroup,omitempty"`
+	IssuerName  string          `json:"issuerName,omitempty"`
+	Duration    metav1.Duration `json:"duration,omitempty"`
+}
+
+func (c *CertManagerConfig) IsEnabled() bool {
+	return c != nil && c.Enabled
+}
+
+func (c *CertManagerConfig) SetDefaults() {
+	if c == nil {
+		return
+	}
+	if c.IssuerGroup == "" {
+		c.IssuerGroup = "cert-manager.io"
+	}
 }
 
 // +kubebuilder:object:generate=false
@@ -397,6 +419,19 @@ func NewSecurityConfig(isvcConfigMap *corev1.ConfigMap) (*SecurityConfig, error)
 		}
 	}
 	return securityConfig, nil
+}
+
+func NewCertManagerConfig(isvcConfigMap *corev1.ConfigMap) (*CertManagerConfig, error) {
+	cfg := &CertManagerConfig{}
+	if v, ok := isvcConfigMap.Data[CertManagerConfigName]; ok {
+		err := json.Unmarshal([]byte(v), &cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	cfg.SetDefaults()
+
+	return cfg, nil
 }
 
 func NewServiceConfig(isvcConfigMap *corev1.ConfigMap) (*ServiceConfig, error) {

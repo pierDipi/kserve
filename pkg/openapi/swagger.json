@@ -1436,6 +1436,26 @@
         }
       }
     },
+    "v1beta1.CertManagerConfig": {
+      "type": "object",
+      "properties": {
+        "duration": {
+          "$ref": "#/definitions/v1.Duration"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "issuerGroup": {
+          "type": "string"
+        },
+        "issuerKind": {
+          "type": "string"
+        },
+        "issuerName": {
+          "type": "string"
+        }
+      }
+    },
     "v1beta1.ComponentExtensionSpec": {
       "description": "ComponentExtensionSpec defines the deployment configuration for a given InferenceService component",
       "type": "object",

@@ -47,6 +47,7 @@ func TestPresetFiles(t *testing.T) {
 		SystemNamespace:         "kserve",
 		IngressGatewayName:      "kserve-ingress-gateway",
 		IngressGatewayNamespace: "kserve",
+		TLSSecretSuffix:         "-kserve-self-signed-certs",
 	}
 
 	tt := map[string]struct {
