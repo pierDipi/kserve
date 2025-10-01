@@ -323,3 +323,12 @@ func WithConfigWorkloadTemplate(podSpec *corev1.PodSpec) LLMInferenceServiceConf
 		config.Spec.Template = podSpec
 	}
 }
+
+func WithNetworkPoliciesDisabled() LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha1.LLMInferenceService) {
+		if llmSvc.Annotations == nil {
+			llmSvc.Annotations = make(map[string]string)
+		}
+		llmSvc.Annotations["serving.kserve.io/enable-network-policies"] = "false"
+	}
+}
