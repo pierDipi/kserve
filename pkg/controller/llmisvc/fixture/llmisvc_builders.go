@@ -329,6 +329,6 @@ func WithNetworkPoliciesDisabled() LLMInferenceServiceOption {
 		if llmSvc.Annotations == nil {
 			llmSvc.Annotations = make(map[string]string)
 		}
-		llmSvc.Annotations["serving.kserve.io/enable-network-policies"] = "false"
+		llmSvc.Annotations["security.opendatahub.io/enable-network-policies"] = "false"
 	}
 }
