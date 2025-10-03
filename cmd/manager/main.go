@@ -39,6 +39,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	knservingv1 "knative.dev/serving/pkg/apis/serving/v1"
 
+	netv1 "k8s.io/api/networking/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -132,7 +133,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	secretCacheSelector, _ := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+	llmSvcCacheSelector, _ := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
 		MatchLabels: map[string]string{
 			"app.kubernetes.io/part-of": "llminferenceservice",
 		},
@@ -153,7 +154,10 @@ func main() {
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
 				&corev1.Secret{}: {
-					Label: secretCacheSelector,
+					Label: llmSvcCacheSelector,
+				},
+				&netv1.NetworkPolicy{}: {
+					Label: llmSvcCacheSelector,
 				},
 			},
 		},

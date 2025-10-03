@@ -237,7 +237,8 @@ func (r *LLMInferenceServiceReconciler) SetupWithManager(mgr ctrl.Manager) error
 		Owns(&appsv1.Deployment{}, builder.WithPredicates(childResourcesPredicate)).
 		Owns(&corev1.Secret{}, builder.WithPredicates(childResourcesPredicate)).
 		Owns(&corev1.Service{}, builder.WithPredicates(childResourcesPredicate)).
-		Watches(&corev1.Service{}, r.enqueueOnIstioShadowServiceChange(mgr, logger))
+		Watches(&corev1.Service{}, r.enqueueOnIstioShadowServiceChange(mgr, logger)).
+		Owns(&netv1.NetworkPolicy{}, builder.WithPredicates(childResourcesPredicate))
 
 	if err := gatewayapi.Install(mgr.GetScheme()); err != nil {
 		return fmt.Errorf("failed to add GIE APIs to scheme: %w", err)

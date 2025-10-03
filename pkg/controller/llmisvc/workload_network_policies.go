@@ -30,6 +30,8 @@ import (
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 )
 
+// +kubebuilder:rbac:groups="networking.k8s.io",resources=networkpolicies,verbs=get;list;watch;create;update;delete
+
 const (
 	networkPoliciesNamespaceNameKey = "kubernetes.io/metadata.name"
 )
@@ -58,6 +60,9 @@ func (r *LLMInferenceServiceReconciler) reconcileSchedulerNetworkPolicy(ctx cont
 			Name:      kmeta.ChildName(llmSvc.GetName(), "-kserve-router-scheduler"),
 			Namespace: llmSvc.GetNamespace(),
 			Labels:    SchedulerLabels(llmSvc),
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(llmSvc, v1alpha1.SchemeGroupVersion.WithKind("LLMInferenceService")),
+			},
 		},
 		Spec: networkingv1.NetworkPolicySpec{
 			// Only restrict ingress traffic since scheduler might need to download models (for kv-cache aware routing)
@@ -77,7 +82,7 @@ func (r *LLMInferenceServiceReconciler) reconcileSchedulerNetworkPolicy(ctx cont
 						}},
 						// Scheduler and Inference traffic (NIXL, etc)
 						{NamespaceSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{networkPoliciesNamespaceNameKey: llmSvc.GetName()},
+							MatchLabels: map[string]string{networkPoliciesNamespaceNameKey: llmSvc.GetNamespace()},
 						}},
 					},
 				},
@@ -104,6 +109,9 @@ func (r *LLMInferenceServiceReconciler) reconcileWorkloadNetworkPolicy(ctx conte
 			Name:      kmeta.ChildName(llmSvc.GetName(), "-kserve-workload"),
 			Namespace: llmSvc.GetNamespace(),
 			Labels:    SchedulerLabels(llmSvc),
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(llmSvc, v1alpha1.SchemeGroupVersion.WithKind("LLMInferenceService")),
+			},
 		},
 		Spec: networkingv1.NetworkPolicySpec{
 			// Only restrict ingress traffic since runtime need to download models from arbitrary locations.
@@ -122,7 +130,7 @@ func (r *LLMInferenceServiceReconciler) reconcileWorkloadNetworkPolicy(ctx conte
 						}},
 						// Scheduler and Inference traffic (NIXL, etc)
 						{NamespaceSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{networkPoliciesNamespaceNameKey: llmSvc.GetName()},
+							MatchLabels: map[string]string{networkPoliciesNamespaceNameKey: llmSvc.GetNamespace()},
 						}},
 					},
 				},
