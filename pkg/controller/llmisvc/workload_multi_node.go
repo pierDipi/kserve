@@ -60,17 +60,25 @@ func (r *LLMInferenceServiceReconciler) reconcileMultiNodeWorkload(ctx context.C
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileMultiNodeMainWorkload(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	expected, err := r.expectedMainMultiNodeLWS(ctx, llmSvc, storageConfig, credentialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to build the expected main LWS: %w", err)
-	}
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	expected, lErr := r.expectedMainMultiNodeLWS(ctx, llmSvc, storageConfig, credentialConfig)
 
 	if llmSvc.Spec.Worker == nil {
-		if err := Delete(ctx, r, llmSvc, expected); err != nil {
-			return err
+		if expected != nil {
+			if err := Delete(ctx, r, llmSvc, expected); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
+	if lErr != nil || expected == nil {
+		return fmt.Errorf("failed to build the expected main LWS: %w", lErr)
+	}
+
 	if err := Reconcile(ctx, r, llmSvc, &lwsapi.LeaderWorkerSet{}, expected, semanticLWSIsEqual); err != nil {
 		return err
 	}
@@ -78,16 +86,25 @@ func (r *LLMInferenceServiceReconciler) reconcileMultiNodeMainWorkload(ctx conte
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileMultiNodePrefillWorkload(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	expected, err := r.expectedPrefillMultiNodeLWS(ctx, llmSvc, storageConfig, credentialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to build the expected prefill LWS: %w", err)
-	}
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	expected, lErr := r.expectedPrefillMultiNodeLWS(ctx, llmSvc, storageConfig, credentialConfig)
+
 	if llmSvc.Spec.Prefill == nil || llmSvc.Spec.Prefill.Worker == nil {
-		if err := Delete(ctx, r, llmSvc, expected); err != nil {
-			return err
+		if expected != nil {
+			if err := Delete(ctx, r, llmSvc, expected); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
+	if lErr != nil || expected == nil {
+		return fmt.Errorf("failed to build the expected prefill LWS: %w", lErr)
+	}
+
 	if err := Reconcile(ctx, r, llmSvc, &lwsapi.LeaderWorkerSet{}, expected, semanticLWSIsEqual); err != nil {
 		return err
 	}
@@ -179,12 +196,16 @@ func (r *LLMInferenceServiceReconciler) expectedMainMultiNodeLWS(ctx context.Con
 
 		serviceAccount, err := r.expectedMultiNodeMainServiceAccount(ctx, llmSvc)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create expected multi node service account: %w", err)
+			// Always return the partial expected resource as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return expected, fmt.Errorf("failed to create expected multi node service account: %w", err)
 		}
 		expected.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec.ServiceAccountName = serviceAccount.GetName()
 
 		if err := r.attachModelArtifacts(ctx, serviceAccount, llmSvc, &expected.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec, storageConfig, credentialConfig); err != nil {
-			return nil, fmt.Errorf("failed to attach model artifacts to leader template: %w", err)
+			// Always return the partial expected resource as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return expected, fmt.Errorf("failed to attach model artifacts to leader template: %w", err)
 		}
 
 		if hasRoutingSidecar(expected.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec) {
@@ -204,12 +225,16 @@ func (r *LLMInferenceServiceReconciler) expectedMainMultiNodeLWS(ctx context.Con
 
 		serviceAccount, err := r.expectedMultiNodeMainServiceAccount(ctx, llmSvc)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create expected multi node service account: %w", err)
+			// Always return the partial expected resource as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return expected, fmt.Errorf("failed to create expected multi node service account: %w", err)
 		}
 		expected.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec.ServiceAccountName = serviceAccount.GetName()
 
 		if err := r.attachModelArtifacts(ctx, serviceAccount, llmSvc, &expected.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec, storageConfig, credentialConfig); err != nil {
-			return nil, fmt.Errorf("failed to attach model artifacts to worker template: %w", err)
+			// Always return the partial expected resource as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return expected, fmt.Errorf("failed to attach model artifacts to worker template: %w", err)
 		}
 
 		if hasRoutingSidecar(expected.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec) {
@@ -282,7 +307,9 @@ func (r *LLMInferenceServiceReconciler) expectedPrefillMultiNodeLWS(ctx context.
 
 		serviceAccount, err := r.expectedMultiNodePrefillServiceAccount(ctx, llmSvc)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create exptected multi node service account: %w", err)
+			// Always return the partial expected resource as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return expected, fmt.Errorf("failed to create exptected multi node service account: %w", err)
 		}
 
 		if llmSvc.Spec.Prefill.Template != nil {
@@ -295,7 +322,9 @@ func (r *LLMInferenceServiceReconciler) expectedPrefillMultiNodeLWS(ctx context.
 			expected.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec.ServiceAccountName = serviceAccount.GetName()
 
 			if err := r.attachModelArtifacts(ctx, serviceAccount, llmSvc, &expected.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec, storageConfig, credentialConfig); err != nil {
-				return nil, fmt.Errorf("failed to attach model artifacts to prefill leader template: %w", err)
+				// Always return the partial expected resource as we might be in the deletion case where we don't
+				// need to have the full spec, let the caller decides how to handle it.
+				return expected, fmt.Errorf("failed to attach model artifacts to prefill leader template: %w", err)
 			}
 		}
 		if llmSvc.Spec.Prefill.Worker != nil {
@@ -303,7 +332,9 @@ func (r *LLMInferenceServiceReconciler) expectedPrefillMultiNodeLWS(ctx context.
 			expected.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec.ServiceAccountName = serviceAccount.GetName()
 
 			if err := r.attachModelArtifacts(ctx, serviceAccount, llmSvc, &expected.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec, storageConfig, credentialConfig); err != nil {
-				return nil, fmt.Errorf("failed to attach model artifacts to prefill worker template: %w", err)
+				// Always return the partial expected resource as we might be in the deletion case where we don't
+				// need to have the full spec, let the caller decides how to handle it.
+				return expected, fmt.Errorf("failed to attach model artifacts to prefill worker template: %w", err)
 			}
 		}
 
@@ -322,16 +353,23 @@ func (r *LLMInferenceServiceReconciler) expectedPrefillMultiNodeLWS(ctx context.
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileMultiNodeMainServiceAccount(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	serviceAccount, err := r.expectedMultiNodeMainServiceAccount(ctx, llmSvc)
-	if err != nil {
-		return fmt.Errorf("failed to create expected multi node service account: %w", err)
-	}
-	if llmSvc.Spec.Worker == nil {
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	serviceAccount, sErr := r.expectedMultiNodeMainServiceAccount(ctx, llmSvc)
+	if serviceAccount != nil && llmSvc.Spec.Worker == nil {
 		return Delete(ctx, r, llmSvc, serviceAccount)
 	}
+	if sErr != nil {
+		return fmt.Errorf("failed to create expected multi node service account: %w", sErr)
+	}
 
-	if err := Reconcile(ctx, r, llmSvc, &corev1.ServiceAccount{}, serviceAccount, semanticServiceAccountIsEqual); err != nil {
-		return fmt.Errorf("failed to reconcile multi node service account %s/%s: %w", serviceAccount.GetNamespace(), serviceAccount.GetName(), err)
+	if serviceAccount != nil {
+		if err := Reconcile(ctx, r, llmSvc, &corev1.ServiceAccount{}, serviceAccount, semanticServiceAccountIsEqual); err != nil {
+			return fmt.Errorf("failed to reconcile multi node service account %s/%s: %w", serviceAccount.GetNamespace(), serviceAccount.GetName(), err)
+		}
 	}
 
 	if err := r.reconcileMultiNodeMainRole(ctx, llmSvc, storageConfig, credentialConfig); err != nil {
@@ -342,30 +380,43 @@ func (r *LLMInferenceServiceReconciler) reconcileMultiNodeMainServiceAccount(ctx
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileMultiNodePrefillServiceAccount(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) error {
-	serviceAccount, err := r.expectedMultiNodePrefillServiceAccount(ctx, llmSvc)
-	if err != nil {
-		return fmt.Errorf("failed to create expected multi node service account: %w", err)
-	}
-	if llmSvc.Spec.Prefill == nil || llmSvc.Spec.Prefill.Worker == nil {
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	serviceAccount, sErr := r.expectedMultiNodePrefillServiceAccount(ctx, llmSvc)
+
+	if serviceAccount != nil && (llmSvc.Spec.Prefill == nil || llmSvc.Spec.Prefill.Worker == nil) {
 		return Delete(ctx, r, llmSvc, serviceAccount)
 	}
+	if sErr != nil {
+		return fmt.Errorf("failed to create expected multi node service account: %w", sErr)
+	}
 
-	if err := Reconcile(ctx, r, llmSvc, &corev1.ServiceAccount{}, serviceAccount, semanticServiceAccountIsEqual); err != nil {
-		return fmt.Errorf("failed to reconcile multi node service account %s/%s: %w", serviceAccount.GetNamespace(), serviceAccount.GetName(), err)
+	if serviceAccount != nil {
+		if err := Reconcile(ctx, r, llmSvc, &corev1.ServiceAccount{}, serviceAccount, semanticServiceAccountIsEqual); err != nil {
+			return fmt.Errorf("failed to reconcile multi node service account %s/%s: %w", serviceAccount.GetNamespace(), serviceAccount.GetName(), err)
+		}
 	}
 
 	return nil
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileMultiNodeMainRole(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	lws, err := r.expectedMainMultiNodeLWS(ctx, llmSvc, storageConfig, credentialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to build the expected main LWS for building the Role: %w", err)
-	}
-
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	lws, lErr := r.expectedMainMultiNodeLWS(ctx, llmSvc, storageConfig, credentialConfig)
 	role := r.expectedMultiNodeMainRole(llmSvc)
-	if !hasRoutingSidecar(lws.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec) && (lws.Spec.LeaderWorkerTemplate.LeaderTemplate == nil || !hasRoutingSidecar(lws.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec)) {
+
+	if lws != nil && !hasRoutingSidecar(lws.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec) && (lws.Spec.LeaderWorkerTemplate.LeaderTemplate == nil || !hasRoutingSidecar(lws.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec)) {
 		return Delete(ctx, r, llmSvc, role)
+	}
+	if lErr != nil || role == nil {
+		return fmt.Errorf("failed to build the expected main LWS for building the Role: %w", lErr)
 	}
 
 	if err := Reconcile(ctx, r, llmSvc, &rbacv1.Role{}, role, semanticRoleIsEqual); err != nil {
@@ -376,14 +427,19 @@ func (r *LLMInferenceServiceReconciler) reconcileMultiNodeMainRole(ctx context.C
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileMultiNodeMainRoleBinding(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, sa *corev1.ServiceAccount, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	lws, err := r.expectedMainMultiNodeLWS(ctx, llmSvc, storageConfig, credentialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to build the expected main LWS for building the RoleBinding: %w", err)
-	}
-
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	lws, lErr := r.expectedMainMultiNodeLWS(ctx, llmSvc, storageConfig, credentialConfig)
 	roleBinding := r.expectedMultiNodeRoleBinding(llmSvc, sa)
-	if !hasRoutingSidecar(lws.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec) && (lws.Spec.LeaderWorkerTemplate.LeaderTemplate == nil || !hasRoutingSidecar(lws.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec)) {
+
+	if lws != nil && !hasRoutingSidecar(lws.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec) && (lws.Spec.LeaderWorkerTemplate.LeaderTemplate == nil || !hasRoutingSidecar(lws.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec)) {
 		return Delete(ctx, r, llmSvc, roleBinding)
+	}
+	if lErr != nil || roleBinding == nil {
+		return fmt.Errorf("failed to build the expected main LWS for building the RoleBinding: %w", lErr)
 	}
 
 	if err := Reconcile(ctx, r, llmSvc, &rbacv1.RoleBinding{}, roleBinding, semanticRoleBindingIsEqual); err != nil {
@@ -417,7 +473,9 @@ func (r *LLMInferenceServiceReconciler) expectedMultiNodeMainServiceAccount(ctx 
 		existingServiceAccount := &corev1.ServiceAccount{}
 		err := r.Client.Get(ctx, types.NamespacedName{Name: existingServiceAccountName, Namespace: llmSvc.Namespace}, existingServiceAccount)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch existing multi node main service account %s/%s: %w", llmSvc.Namespace, existingServiceAccountName, err)
+			// Always return the partial expected resource as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return expectedServiceAccount, fmt.Errorf("failed to fetch existing multi node main service account %s/%s: %w", llmSvc.Namespace, existingServiceAccountName, err)
 		}
 		expectedServiceAccount.Annotations = existingServiceAccount.Annotations
 		expectedServiceAccount.Labels = existingServiceAccount.Labels
@@ -460,7 +518,9 @@ func (r *LLMInferenceServiceReconciler) expectedMultiNodePrefillServiceAccount(c
 		existingServiceAccount := &corev1.ServiceAccount{}
 		err := r.Client.Get(ctx, types.NamespacedName{Name: existingServiceAccountName, Namespace: llmSvc.Namespace}, existingServiceAccount)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch existing multi node prefill service account %s/%s: %w", llmSvc.Namespace, existingServiceAccountName, err)
+			// Always return the partial expected resource as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return expectedServiceAccount, fmt.Errorf("failed to fetch existing multi node prefill service account %s/%s: %w", llmSvc.Namespace, existingServiceAccountName, err)
 		}
 		expectedServiceAccount.Annotations = existingServiceAccount.Annotations
 		expectedServiceAccount.Labels = existingServiceAccount.Labels

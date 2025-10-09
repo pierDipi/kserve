@@ -57,13 +57,19 @@ func (r *LLMInferenceServiceReconciler) reconcileSingleNodeWorkload(ctx context.
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileSingleNodeMainWorkload(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	expected, err := r.expectedSingleNodeMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to get expected main deployment: %w", err)
-	}
-	if llmSvc.Spec.Worker != nil {
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	expected, dErr := r.expectedSingleNodeMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
+	if expected != nil && llmSvc.Spec.Worker != nil {
 		return Delete(ctx, r, llmSvc, expected)
 	}
+	if dErr != nil {
+		return fmt.Errorf("failed to get expected main deployment: %w", dErr)
+	}
+
 	if err := Reconcile(ctx, r, llmSvc, &appsv1.Deployment{}, expected, semanticDeploymentIsEqual); err != nil {
 		return err
 	}
@@ -112,7 +118,9 @@ func (r *LLMInferenceServiceReconciler) expectedSingleNodeMainDeployment(ctx con
 			var err error
 			serviceAccount, err = r.expectedSingleNodeMainServiceAccount(ctx, llmSvc)
 			if err != nil {
-				return nil, fmt.Errorf("failed to created expected single node service account: %w", err)
+				// Always return the partial expected deployment as we might be in the deletion case where we don't
+				// need to have the full spec, let the caller decides how to handle it.
+				return d, fmt.Errorf("failed to created expected single node service account: %w", err)
 			}
 			d.Spec.Template.Spec.ServiceAccountName = serviceAccount.GetName()
 			s := routingSidecar(&d.Spec.Template.Spec)
@@ -127,12 +135,16 @@ func (r *LLMInferenceServiceReconciler) expectedSingleNodeMainDeployment(ctx con
 			serviceAccount = &corev1.ServiceAccount{}
 			err := r.Client.Get(ctx, types.NamespacedName{Name: llmSvc.Spec.Template.ServiceAccountName, Namespace: llmSvc.Namespace}, serviceAccount)
 			if err != nil {
-				return nil, fmt.Errorf("failed to fetch existing single node main service account %s/%s: %w", llmSvc.Namespace, llmSvc.Spec.Template.ServiceAccountName, err)
+				// Always return the partial expected deployment as we might be in the deletion case where we don't
+				// need to have the full spec, let the caller decides how to handle it.
+				return d, fmt.Errorf("failed to fetch existing single node main service account %s/%s: %w", llmSvc.Namespace, llmSvc.Spec.Template.ServiceAccountName, err)
 			}
 		}
 
 		if err := r.attachModelArtifacts(ctx, serviceAccount, llmSvc, &d.Spec.Template.Spec, storageConfig, credentialConfig); err != nil {
-			return nil, fmt.Errorf("failed to attach model artifacts to main deployment: %w", err)
+			// Always return the partial expected deployment as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return d, fmt.Errorf("failed to attach model artifacts to main deployment: %w", err)
 		}
 	}
 
@@ -144,16 +156,20 @@ func (r *LLMInferenceServiceReconciler) expectedSingleNodeMainDeployment(ctx con
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileSingleNodePrefill(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	prefill, err := r.expectedPrefillMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to get expected prefill deployment: %w", err)
-	}
-	if llmSvc.Spec.Prefill == nil || llmSvc.Spec.Prefill.Worker != nil {
+	// We construct the expected resources based on the existence of the ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// anymore since we just need to delete the child resources.
+	prefill, dErr := r.expectedPrefillMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
+	if prefill != nil && (llmSvc.Spec.Prefill == nil || llmSvc.Spec.Prefill.Worker != nil) {
 		if err := Delete(ctx, r, llmSvc, prefill); err != nil {
 			return fmt.Errorf("failed to delete prefill main deployment: %w", err)
 		}
 		return nil
 	}
+	if dErr != nil || prefill == nil {
+		return fmt.Errorf("failed to get expected prefill deployment: %w", dErr)
+	}
+
 	if err := Reconcile(ctx, r, llmSvc, &appsv1.Deployment{}, prefill, semanticDeploymentIsEqual); err != nil {
 		return fmt.Errorf("failed to reconcile prefill deployment %s/%s: %w", prefill.GetNamespace(), prefill.GetName(), err)
 	}
@@ -202,12 +218,16 @@ func (r *LLMInferenceServiceReconciler) expectedPrefillMainDeployment(ctx contex
 			existingServiceAccount = &corev1.ServiceAccount{}
 			err := r.Client.Get(ctx, types.NamespacedName{Name: llmSvc.Spec.Prefill.Template.ServiceAccountName, Namespace: llmSvc.Namespace}, existingServiceAccount)
 			if err != nil {
-				return nil, fmt.Errorf("failed to fetch existing single node prefill service account %s/%s: %w", llmSvc.Namespace, llmSvc.Spec.Prefill.Template.ServiceAccountName, err)
+				// Always return the partial expected deployment as we might be in the deletion case where we don't
+				// need to have the full spec, let the caller decides how to handle it.
+				return d, fmt.Errorf("failed to fetch existing single node prefill service account %s/%s: %w", llmSvc.Namespace, llmSvc.Spec.Prefill.Template.ServiceAccountName, err)
 			}
 		}
 
 		if err := r.attachModelArtifacts(ctx, existingServiceAccount, llmSvc, &d.Spec.Template.Spec, storageConfig, credentialConfig); err != nil {
-			return nil, fmt.Errorf("failed to attach model artifacts to prefill deployment: %w", err)
+			// Always return the partial expected deployment as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return d, fmt.Errorf("failed to attach model artifacts to prefill deployment: %w", err)
 		}
 	}
 
@@ -274,21 +294,28 @@ func semanticDeploymentIsEqual(expected *appsv1.Deployment, curr *appsv1.Deploym
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileSingleNodeMainServiceAccount(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	expectedDeployment, err := r.expectedSingleNodeMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to get expected main deployment: %w", err)
-	}
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	expectedDeployment, dErr := r.expectedSingleNodeMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
+	serviceAccount, sErr := r.expectedSingleNodeMainServiceAccount(ctx, llmSvc)
 
-	serviceAccount, err := r.expectedSingleNodeMainServiceAccount(ctx, llmSvc)
-	if err != nil {
-		return fmt.Errorf("failed to created expected single node service account: %w", err)
-	}
-	if !hasRoutingSidecar(expectedDeployment.Spec.Template.Spec) {
+	if expectedDeployment != nil && !hasRoutingSidecar(expectedDeployment.Spec.Template.Spec) {
 		return Delete(ctx, r, llmSvc, serviceAccount)
 	}
+	if dErr != nil {
+		return fmt.Errorf("failed to get expected main deployment: %w", dErr)
+	}
+	if sErr != nil {
+		return fmt.Errorf("failed to created expected single node service account: %w", sErr)
+	}
 
-	if err := Reconcile(ctx, r, llmSvc, &corev1.ServiceAccount{}, serviceAccount, semanticServiceAccountIsEqual); err != nil {
-		return fmt.Errorf("failed to reconcile single node service account %s/%s: %w", serviceAccount.GetNamespace(), serviceAccount.GetName(), err)
+	if serviceAccount != nil {
+		if err := Reconcile(ctx, r, llmSvc, &corev1.ServiceAccount{}, serviceAccount, semanticServiceAccountIsEqual); err != nil {
+			return fmt.Errorf("failed to reconcile single node service account %s/%s: %w", serviceAccount.GetNamespace(), serviceAccount.GetName(), err)
+		}
 	}
 
 	if err := r.reconcileSingleNodeMainRole(ctx, llmSvc, storageConfig, credentialConfig); err != nil {
@@ -299,14 +326,19 @@ func (r *LLMInferenceServiceReconciler) reconcileSingleNodeMainServiceAccount(ct
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileSingleNodeMainRole(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	expectedDeployment, err := r.expectedSingleNodeMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to get expected main deployment: %w", err)
-	}
-
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	expectedDeployment, dErr := r.expectedSingleNodeMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
 	role := r.expectedSingleNodeRole(llmSvc)
-	if !hasRoutingSidecar(expectedDeployment.Spec.Template.Spec) {
+
+	if expectedDeployment != nil && !hasRoutingSidecar(expectedDeployment.Spec.Template.Spec) {
 		return Delete(ctx, r, llmSvc, role)
+	}
+	if dErr != nil {
+		return fmt.Errorf("failed to get expected main deployment: %w", dErr)
 	}
 
 	if err := Reconcile(ctx, r, llmSvc, &rbacv1.Role{}, role, semanticRoleIsEqual); err != nil {
@@ -317,14 +349,19 @@ func (r *LLMInferenceServiceReconciler) reconcileSingleNodeMainRole(ctx context.
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileSingleNodeMainRoleBinding(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, sa *corev1.ServiceAccount, storageConfig *kserveTypes.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) error {
-	expectedDeployment, err := r.expectedSingleNodeMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to get expected main deployment: %w", err)
-	}
-
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	expectedDeployment, dErr := r.expectedSingleNodeMainDeployment(ctx, llmSvc, storageConfig, credentialConfig)
 	roleBinding := r.expectedSingleNodeRoleBinding(llmSvc, sa)
-	if !hasRoutingSidecar(expectedDeployment.Spec.Template.Spec) {
+
+	if expectedDeployment != nil && !hasRoutingSidecar(expectedDeployment.Spec.Template.Spec) {
 		return Delete(ctx, r, llmSvc, roleBinding)
+	}
+	if dErr != nil {
+		return fmt.Errorf("failed to get expected main deployment: %w", dErr)
 	}
 
 	if err := Reconcile(ctx, r, llmSvc, &rbacv1.RoleBinding{}, roleBinding, semanticRoleBindingIsEqual); err != nil {
@@ -349,7 +386,9 @@ func (r *LLMInferenceServiceReconciler) expectedSingleNodeMainServiceAccount(ctx
 		existingServiceAccount := &corev1.ServiceAccount{}
 		err := r.Client.Get(ctx, types.NamespacedName{Name: llmSvc.Spec.Template.ServiceAccountName, Namespace: llmSvc.Namespace}, existingServiceAccount)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch existing single node main service account %s/%s: %w", llmSvc.Namespace, llmSvc.Spec.Template.ServiceAccountName, err)
+			// Always return the partial expected resource as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return expectedServiceAccount, fmt.Errorf("failed to fetch existing single node main service account %s/%s: %w", llmSvc.Namespace, llmSvc.Spec.Template.ServiceAccountName, err)
 		}
 		expectedServiceAccount.Annotations = existingServiceAccount.Annotations
 		expectedServiceAccount.Labels = existingServiceAccount.Labels

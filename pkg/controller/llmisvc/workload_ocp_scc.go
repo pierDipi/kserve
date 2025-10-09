@@ -38,25 +38,23 @@ func (r *LLMInferenceServiceReconciler) reconcileMultiNodeOCPRoleBinding(ctx con
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileMultiNodeSCCRoleBinding(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) error {
-	expected, err := r.expectedMultiNodeSCCRoleBinding(ctx, llmSvc)
-	if err != nil {
-		return fmt.Errorf("failed to create expected multi node scc role binding: %w", err)
-	}
-	if llmSvc.Spec.Worker == nil && (llmSvc.Spec.Prefill == nil || llmSvc.Spec.Prefill.Worker == nil) {
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	expected, rbErr := r.expectedMultiNodeSCCRoleBinding(ctx, llmSvc)
+	if expected != nil && llmSvc.Spec.Worker == nil && (llmSvc.Spec.Prefill == nil || llmSvc.Spec.Prefill.Worker == nil) {
 		return Delete(ctx, r, llmSvc, expected)
 	}
+	if rbErr != nil {
+		return fmt.Errorf("failed to create expected multi node scc role binding: %w", rbErr)
+	}
+
 	return Reconcile(ctx, r, llmSvc, &rbacv1.RoleBinding{}, expected, semanticRoleBindingIsEqual)
 }
 
 func (r *LLMInferenceServiceReconciler) expectedMultiNodeSCCRoleBinding(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) (*rbacv1.RoleBinding, error) {
-	m, err := r.expectedMultiNodeMainServiceAccount(ctx, llmSvc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create expected multi node main service account: %w", err)
-	}
-	p, err := r.expectedMultiNodePrefillServiceAccount(ctx, llmSvc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create expected multi node prefill service account: %w", err)
-	}
 
 	expected := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -75,16 +73,24 @@ func (r *LLMInferenceServiceReconciler) expectedMultiNodeSCCRoleBinding(ctx cont
 			Kind:     "ClusterRole",
 			Name:     "openshift-ai-llminferenceservice-scc",
 		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind: "ServiceAccount",
-				Name: m.Name,
-			},
-			{
-				Kind: "ServiceAccount",
-				Name: p.Name,
-			},
-		},
+	}
+
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	if m, _ := r.expectedMultiNodeMainServiceAccount(ctx, llmSvc); m != nil {
+		expected.Subjects = append(expected.Subjects, rbacv1.Subject{
+			Kind: "ServiceAccount",
+			Name: m.Name,
+		})
+	}
+	if p, _ := r.expectedMultiNodePrefillServiceAccount(ctx, llmSvc); p != nil {
+		expected.Subjects = append(expected.Subjects, rbacv1.Subject{
+			Kind: "ServiceAccount",
+			Name: p.Name,
+		})
 	}
 
 	log.FromContext(ctx).V(2).Info("Expected SCC multi-node role binding", "rolebinding", expected)

@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -100,14 +101,25 @@ func (r *LLMInferenceServiceReconciler) reconcileSchedulerRoleBinding(ctx contex
 }
 
 func (r *LLMInferenceServiceReconciler) reconcileSchedulerServiceAccount(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) error {
-	serviceAccount := r.expectedSchedulerServiceAccount(llmSvc)
+	// We construct the expected resources based on the existence of another ServiceAccount specified in the llmSvc spec.
+	// If such child expected resources aren't needed anymore, we don't error out when such ServiceAccount doesn't exist
+	// since we just need to delete the child resources.
+	// The expectation is that expected* methods always return resources (even partial resources), even when there is an
+	// error
+	serviceAccount, sErr := r.expectedSchedulerServiceAccount(ctx, llmSvc)
 
-	if !llmSvc.DeletionTimestamp.IsZero() {
+	if serviceAccount != nil && !llmSvc.DeletionTimestamp.IsZero() {
 		return r.reconcileSchedulerAuthDelegatorBinding(ctx, llmSvc, serviceAccount)
 	}
 
 	if llmSvc.Spec.Router == nil || llmSvc.Spec.Router.Scheduler == nil || llmSvc.Spec.Router.Scheduler.Template == nil || llmSvc.Spec.Router.Scheduler.Pool.HasRef() {
-		return Delete(ctx, r, llmSvc, serviceAccount)
+		if serviceAccount != nil {
+			return Delete(ctx, r, llmSvc, serviceAccount)
+		}
+		return nil
+	}
+	if sErr != nil || serviceAccount == nil {
+		return fmt.Errorf("failed to get expected scheduler service account: %w", sErr)
 	}
 
 	if err := Reconcile(ctx, r, llmSvc, &corev1.ServiceAccount{}, serviceAccount, semanticServiceAccountIsEqual); err != nil {
@@ -330,6 +342,13 @@ func (r *LLMInferenceServiceReconciler) expectedSchedulerDeployment(ctx context.
 		}
 	}
 
+	sa, _ := r.expectedSchedulerServiceAccount(ctx, llmSvc)
+	if sa != nil {
+		d.Spec.Template.Spec.ServiceAccountName = sa.Name
+	}
+
+	r.attachModelArtifacts()
+
 	log.FromContext(ctx).V(2).Info("Expected router scheduler deployment", "deployment", d)
 
 	return d
@@ -390,7 +409,7 @@ schedulingProfiles:
 	}
 }
 
-func (r *LLMInferenceServiceReconciler) expectedSchedulerServiceAccount(llmSvc *v1alpha1.LLMInferenceService) *corev1.ServiceAccount {
+func (r *LLMInferenceServiceReconciler) expectedSchedulerServiceAccount(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) (*corev1.ServiceAccount, error) {
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kmeta.ChildName(llmSvc.GetName(), "-epp-sa"),
@@ -398,7 +417,6 @@ func (r *LLMInferenceServiceReconciler) expectedSchedulerServiceAccount(llmSvc *
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(llmSvc, v1alpha1.LLMInferenceServiceGVK),
 			},
-			Labels: SchedulerLabels(llmSvc),
 		},
 	}
 
@@ -406,10 +424,27 @@ func (r *LLMInferenceServiceReconciler) expectedSchedulerServiceAccount(llmSvc *
 		llmSvc.Spec.Router.Scheduler != nil &&
 		llmSvc.Spec.Router.Scheduler.Template != nil &&
 		llmSvc.Spec.Router.Scheduler.Template.ServiceAccountName != "" {
-		sa.Name = llmSvc.Spec.Router.Scheduler.Template.ServiceAccountName
+
+		existingServiceAccount := &corev1.ServiceAccount{}
+		err := r.Client.Get(ctx, types.NamespacedName{Name: llmSvc.Spec.Template.ServiceAccountName, Namespace: llmSvc.Namespace}, existingServiceAccount)
+		if err != nil {
+			// Always return the partial expected resource as we might be in the deletion case where we don't
+			// need to have the full spec, let the caller decides how to handle it.
+			return sa, fmt.Errorf("failed to fetch existing scheduler service account %s/%s: %w", llmSvc.Namespace, llmSvc.Spec.Template.ServiceAccountName, err)
+		}
+		sa.Annotations = existingServiceAccount.Annotations
+		sa.Labels = existingServiceAccount.Labels
+		sa.Secrets = existingServiceAccount.Secrets
+		sa.ImagePullSecrets = existingServiceAccount.ImagePullSecrets
+		sa.AutomountServiceAccountToken = existingServiceAccount.AutomountServiceAccountToken
 	}
 
-	return sa
+	if sa.Labels == nil {
+		sa.Labels = make(map[string]string, 2)
+	}
+	maps.Copy(sa.Labels, SchedulerLabels(llmSvc))
+
+	return sa, nil
 }
 
 func (r *LLMInferenceServiceReconciler) expectedSchedulerAuthDelegatorBinding(llmSvc *v1alpha1.LLMInferenceService, sa *corev1.ServiceAccount) *rbacv1.ClusterRoleBinding {
