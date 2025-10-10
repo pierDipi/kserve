@@ -11,10 +11,19 @@ resources:
 - ../../crd/external/opendatahub-operator
 - ../odh
 - ../test/minio
+- github.com/opendatahub-io/odh-model-controller/config/base?ref=incubating
 
 namespace: opendatahub
+
+generatorOptions:
+  disableNameSuffixHash: true
 
 # cp ../test/manager_image_patch.yaml manager_image_patch.yaml
 patches:
   - path: manager_image_patch.yaml
- 
+
+configMapGenerator:
+  - envs:
+      - params-combined.env
+    name: kserve-parameters
+    behavior: replace

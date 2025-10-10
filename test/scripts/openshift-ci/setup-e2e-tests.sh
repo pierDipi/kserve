@@ -33,14 +33,17 @@ readonly DEPLOYMENT_PROFILE="${3:-serverless}"
 validate_deployment_profile "${DEPLOYMENT_PROFILE}"
 
 : "${NS:=opendatahub}"
-: "${SKLEARN_IMAGE:=kserve/sklearnserver:latest}"
-: "${KSERVE_CONTROLLER_IMAGE:=quay.io/opendatahub/kserve-controller:latest}"
-: "${KSERVE_AGENT_IMAGE:=quay.io/opendatahub/kserve-agent:latest}"
-: "${KSERVE_ROUTER_IMAGE:=quay.io/opendatahub/kserve-router:latest}"
-: "${STORAGE_INITIALIZER_IMAGE:=quay.io/opendatahub/kserve-storage-initializer:latest}"
-: "${ODH_MODEL_CONTROLLER_IMAGE:=quay.io/opendatahub/odh-model-controller:fast}"
-: "${ERROR_404_ISVC_IMAGE:=error-404-isvc:latest}"
-: "${SUCCESS_200_ISVC_IMAGE:=success-200-isvc:latest}"
+
+if [ -z "$OPENSHIFT_CI" ] ; then
+  echo "== Setting default images for non-CI runs."
+  export SKLEARN_IMAGE=${SKLEARN_IMAGE:-kserve/sklearnserver:latest}
+  export KSERVE_CONTROLLER_IMAGE="${KSERVE_CONTROLLER_IMAGE:-quay.io/opendatahub/kserve-controller:latest}"
+  export KSERVE_AGENT_IMAGE="${KSERVE_AGENT_IMAGE:-quay.io/opendatahub/kserve-agent:latest}"
+  export KSERVE_ROUTER_IMAGE="${KSERVE_ROUTER_IMAGE:-quay.io/opendatahub/kserve-router:latest}"
+  export STORAGE_INITIALIZER_IMAGE="${STORAGE_INITIALIZER_IMAGE:-quay.io/opendatahub/kserve-storage-initializer:latest}"
+  export ERROR_404_ISVC_IMAGE="${ERROR_404_ISVC_IMAGE:-error-404-isvc:latest}"
+  export SUCCESS_200_ISVC_IMAGE="${SUCCESS_200_ISVC_IMAGE:-success-200-isvc:latest}"
+fi
 
 echo "NS=$NS"
 echo "SKLEARN_IMAGE=$SKLEARN_IMAGE"
@@ -99,17 +102,7 @@ kustomize build $PROJECT_ROOT/config/crd | oc apply --server-side=true -f -
 wait_for_crd llminferenceserviceconfigs.serving.kserve.io 90s
 
 echo "⏳ Installing KServe with Minio"
-
-# Update params.env with current image env variables
-cp "$PROJECT_ROOT/config/overlays/odh/params.env" "$PROJECT_ROOT/config/overlays/odh/params.env.bak"
-sed -i "s|^kserve-controller=.*$|kserve-controller=${KSERVE_CONTROLLER_IMAGE}|" "$PROJECT_ROOT/config/overlays/odh/params.env"
-sed -i "s|^kserve-agent=.*$|kserve-agent=${KSERVE_AGENT_IMAGE}|" "$PROJECT_ROOT/config/overlays/odh/params.env"
-sed -i "s|^kserve-router=.*$|kserve-router=${KSERVE_ROUTER_IMAGE}|" "$PROJECT_ROOT/config/overlays/odh/params.env"
-sed -i "s|^kserve-storage-initializer=.*$|kserve-storage-initializer=${STORAGE_INITIALIZER_IMAGE}|" "$PROJECT_ROOT/config/overlays/odh/params.env"
-sed -i "s|^sklearn=.*$|sklearn=${SKLEARN_IMAGE}|" "$PROJECT_ROOT/config/overlays/odh/params.env"
-
-kustomize build $PROJECT_ROOT/config/overlays/odh-test | oc apply --server-side=true -f -
-mv "$PROJECT_ROOT/config/overlays/odh/params.env.bak" "$PROJECT_ROOT/config/overlays/odh/params.env"
+kustomize build $PROJECT_ROOT/config/overlays/odh-test | envsubst | oc apply --server-side=true -f -
 
 wait_for_crd datascienceclusters.datasciencecluster.opendatahub.io 90s
 wait_for_crd dscinitializations.dscinitialization.opendatahub.io 90s
@@ -139,21 +132,11 @@ if [[ "${DEPLOYMENT_PROFILE}" == "llm-d" ]]; then
   oc patch configmap inferenceservice-config -n ${NS} --patch-file <(cat ${PROJECT_ROOT}/config/overlays/odh-test/configmap/inferenceservice-openshift-ci-llm.yaml | envsubst)
 fi
 
-wait_for_pod_ready "${NS}" "control-plane=kserve-controller-manager"
-
 if [ "${DEPLOYMENT_PROFILE}" == "serverless" ]; then
   echo "⏳ Installing authorino and kserve gateways"
   curl -sL https://raw.githubusercontent.com/Kuadrant/authorino-operator/main/utils/install.sh | sed "s|kubectl|oc|" | 
     bash -s -- -v 0.16.0
 fi
-
-# TODO can be moved to odh-test overlays
-echo "⏳ Installing ODH Model Controller"
-kustomize build $PROJECT_ROOT/test/scripts/openshift-ci |
-    sed "s|quay.io/opendatahub/odh-model-controller:fast|${ODH_MODEL_CONTROLLER_IMAGE}|" |
-    oc apply -n ${NS} -f -
-
-wait_for_pod_ready "${NS}" "app=odh-model-controller"
 
 echo "Add testing models to minio storage ..." # Reference: config/overlays/odh-test/minio/minio-init-job.yaml
 oc expose service minio-service -n ${NS} && sleep 5
@@ -173,6 +156,9 @@ else
   curl -L https://storage.googleapis.com/kfserving-examples/models/sklearn/1.0/model/model.joblib -o /tmp/sklearn-model.joblib
   mc cp /tmp/sklearn-model.joblib storage/example-models/sklearn/model.joblib
 fi
+
+wait_for_pod_ready "${NS}" "control-plane=kserve-controller-manager"
+wait_for_pod_ready "${NS}" "app=odh-model-controller"
 
 oc delete route -n ${NS} minio-service
 
@@ -198,9 +184,9 @@ oc apply -n kserve-ci-e2e-test -f <(
       "$PROJECT_ROOT/config/overlays/test/minio/minio-user-secret.yaml"
 )
 
-kustomize build $PROJECT_ROOT/config/overlays/odh-test/clusterresources |
-  sed "s|kserve/sklearnserver:latest|${SKLEARN_IMAGE}|" |
-  sed "s|kserve/storage-initializer:latest|${STORAGE_INITIALIZER_IMAGE}|" |
+# LoadRestrictionsNone because it loads params.env from the parent.
+kustomize build --load-restrictor LoadRestrictionsNone $PROJECT_ROOT/config/overlays/odh-test/clusterresources |
+  envsubst |
   oc apply -n kserve-ci-e2e-test -f -
 
 # Add the enablePassthrough annotation to the ServingRuntimes, to let Knative to

@@ -15,7 +15,7 @@ data:
     }
     storageInitializer: |-
     {
-        "image" : "kserve/storage-initializer:latest",
+        "image" : "${STORAGE_INITIALIZER_IMAGE}",
         "memoryRequest": "100Mi",
         "memoryLimit": "1Gi",
         "cpuRequest": "100m",
@@ -41,7 +41,7 @@ data:
     }
   logger: |-
     {
-        "image" : "quay.io/opendatahub/kserve-agent",
+        "image" : "${KSERVE_AGENT_IMAGE}",
         "memoryRequest": "100Mi",
         "memoryLimit": "1Gi",
         "cpuRequest": "100m",
@@ -50,7 +50,7 @@ data:
     }
   batcher: |-
     {
-        "image" : "quay.io/opendatahub/kserve-agent",
+        "image" : "${KSERVE_AGENT_IMAGE}",
         "memoryRequest": "1Gi",
         "memoryLimit": "1Gi",
         "cpuRequest": "1",
@@ -58,7 +58,7 @@ data:
     }
   agent: |-
     {
-        "image" : "quay.io/opendatahub/kserve-agent",
+        "image" : "${KSERVE_AGENT_IMAGE}",
         "memoryRequest": "100Mi",
         "memoryLimit": "1Gi",
         "cpuRequest": "100m",
@@ -66,7 +66,7 @@ data:
     }
   router: |-
     {
-        "image" : "quay.io/opendatahub/kserve-router",
+        "image" : "${KSERVE_ROUTER_IMAGE}",
         "memoryRequest": "100Mi",
         "memoryLimit": "1Gi",
         "cpuRequest": "100m",
