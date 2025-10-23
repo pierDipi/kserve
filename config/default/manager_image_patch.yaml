@@ -8,5 +8,5 @@ spec:
     spec:
       containers:
       # Change the value of image field below to your controller image URL
-      - image: kserve/kserve-controller:latest
+      - image: default-route-openshift-image-registry.apps.pierdipi.osp.rh-ods.com/opendatahub/kserve-controller:27429f09b
         name: manager

@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	"github.com/kserve/kserve/pkg/constants"
@@ -30,44 +31,57 @@ import (
 	"github.com/kserve/kserve/pkg/types"
 )
 
+// Config holds configuration needed for LLM inference services
+// It aggregates ingress, storage, and credential settings from the KServe configmap
 type Config struct {
 	SystemNamespace             string   `json:"systemNamespace,omitempty"`
 	IngressGatewayName          string   `json:"ingressGatewayName,omitempty"`
 	IngressGatewayNamespace     string   `json:"ingressGatewayNamespace,omitempty"`
 	IstioGatewayControllerNames []string `json:"istioGatewayControllerNames,omitempty"`
 
+	CertManagerConfig *v1beta1.CertManagerConfig `json:"certManagerConfig,omitempty"`
+	TLSSecretSuffix   string                     `json:"TLSSecretSuffix,omitempty"`
+
+	// Storage and credential configs are excluded from JSON serialization
+	// as they contain sensitive information
 	StorageConfig    *types.StorageInitializerConfig `json:"-"`
 	CredentialConfig *credentials.CredentialConfig   `json:"-"`
 }
 
 // NewConfig creates an instance of llm-specific config based on predefined values
 // in IngressConfig struct
-func NewConfig(ingressConfig *v1beta1.IngressConfig, storageConfig *types.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig) *Config {
+func NewConfig(ingressConfig *v1beta1.IngressConfig, storageConfig *types.StorageInitializerConfig, credentialConfig *credentials.CredentialConfig, certManagerConfig *v1beta1.CertManagerConfig) *Config {
 	igwNs := constants.KServeNamespace
 	igwName := ingressConfig.KserveIngressGateway
+	// Parse gateway name to extract namespace and name components
+	// Format can be either "gateway-name" or "namespace/gateway-name"
 	igw := strings.Split(igwName, "/")
 	if len(igw) == 2 {
 		igwNs = igw[0]
 		igwName = igw[1]
 	}
 
+	tlsSecretSuffix := selfSignedCertificateSecretSuffix
+	if certManagerConfig.Enabled {
+		tlsSecretSuffix = certManagerSecretSuffix
+	}
+
 	return &Config{
 		SystemNamespace:         constants.KServeNamespace,
 		IngressGatewayNamespace: igwNs,
 		IngressGatewayName:      igwName,
-		// TODO make it configurable
-		IstioGatewayControllerNames: []string{
-			"istio.io/gateway-controller",
-			"istio.io/unmanaged-gateway",
-			"openshift.io/gateway-controller/v1",
-		},
-		StorageConfig:    storageConfig,
-		CredentialConfig: credentialConfig,
+		StorageConfig:           storageConfig,
+		CredentialConfig:        credentialConfig,
+		CertManagerConfig:       certManagerConfig,
+		TLSSecretSuffix:         tlsSecretSuffix,
 	}
 }
 
-func LoadConfig(ctx context.Context, clientset kubernetes.Interface) (*Config, error) {
-	isvcConfigMap, errCfgMap := v1beta1.GetInferenceServiceConfigMap(ctx, clientset) // Fetch directly from API Server
+// LoadConfig loads configuration from the KServe configmap in the cluster
+// It fetches and converts the configmap into structured config objects needed by LLM services
+func LoadConfig(ctx context.Context, clientset kubernetes.Interface, cli client.Client) (*Config, error) {
+	// Fetch the KServe configmap directly from the API server to get latest values
+	isvcConfigMap, errCfgMap := v1beta1.GetInferenceServiceConfigMap(ctx, clientset)
 	if errCfgMap != nil {
 		return nil, fmt.Errorf("failed to load InferenceServiceConfigMap: %w", errCfgMap)
 	}
@@ -87,7 +101,12 @@ func LoadConfig(ctx context.Context, clientset kubernetes.Interface) (*Config, e
 		return nil, fmt.Errorf("failed to convert InferenceServiceConfigMap to CredentialConfig: %w", errConvert)
 	}
 
-	return NewConfig(ingressConfig, storageInitializerConfig, &credentialConfig), nil
+	certManagerConfig, errConvert := v1beta1.NewCertManagerConfig(ctx, isvcConfigMap, cli)
+	if errConvert != nil {
+		return nil, fmt.Errorf("failed to convert InferenceServiceConfigMap to CertManagerConfig: %w", errConvert)
+	}
+
+	return NewConfig(ingressConfig, storageInitializerConfig, &credentialConfig, certManagerConfig), nil
 }
 
 func (c Config) isIstioGatewayController(name string) bool {

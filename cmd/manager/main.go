@@ -404,6 +404,7 @@ func main() {
 
 	llmConfigValidator := &llmisvcvalidation.LLMInferenceServiceConfigValidator{
 		ClientSet: clientSet,
+		Client:    mgr.GetClient(),
 	}
 	if err = llmConfigValidator.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "llminferenceserviceconfig")

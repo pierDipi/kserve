@@ -28,6 +28,7 @@ const (
 )
 
 const (
+	WorkloadCertificateReady   apis.ConditionType = "WorkloadCertificateReady"
 	MainWorkloadReady          apis.ConditionType = "MainWorkloadReady"
 	WorkerWorkloadReady        apis.ConditionType = "WorkerWorkloadReady"
 	PrefillWorkloadReady       apis.ConditionType = "PrefillWorkloadReady"
@@ -89,12 +90,21 @@ func (in *LLMInferenceService) MarkPrefillWorkerWorkloadNotReady(reason, message
 	in.GetConditionSet().Manage(in.GetStatus()).MarkFalse(PrefillWorkerWorkloadReady, reason, messageFormat, messageA...)
 }
 
+func (in *LLMInferenceService) MarkWorkloadCertificateNotReady(reason, messageFormat string, messageA ...interface{}) {
+	in.GetConditionSet().Manage(in.GetStatus()).MarkFalse(WorkloadCertificateReady, reason, messageFormat, messageA...)
+}
+
+func (in *LLMInferenceService) MarkWorkloadCertificateReady() {
+	in.GetConditionSet().Manage(in.GetStatus()).MarkTrue(WorkloadCertificateReady)
+}
+
 func (in *LLMInferenceService) DetermineWorkloadReadiness() {
 	subConditions := []*apis.Condition{
 		in.GetStatus().GetCondition(MainWorkloadReady),
 		in.GetStatus().GetCondition(WorkerWorkloadReady),
 		in.GetStatus().GetCondition(PrefillWorkloadReady),
 		in.GetStatus().GetCondition(PrefillWorkerWorkloadReady),
+		in.GetStatus().GetCondition(WorkloadCertificateReady),
 	}
 
 	for _, cond := range subConditions {

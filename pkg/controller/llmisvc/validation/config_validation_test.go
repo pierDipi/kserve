@@ -21,7 +21,6 @@ import (
 
 	"github.com/kserve/kserve/pkg/controller/llmisvc"
 	"github.com/kserve/kserve/pkg/controller/llmisvc/fixture"
-
 	"github.com/onsi/gomega"
 
 	"github.com/kserve/kserve/pkg/controller/llmisvc/validation"
@@ -29,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
+	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	"github.com/kserve/kserve/pkg/constants"
@@ -221,5 +221,6 @@ func setupValidator(t *testing.T) *validation.LLMInferenceServiceConfigValidator
 
 	return &validation.LLMInferenceServiceConfigValidator{
 		ClientSet: clientset,
+		Client:    fakeclient.NewFakeClient(configMap),
 	}
 }

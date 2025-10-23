@@ -61,6 +61,8 @@ spec:
               - --grpc-health-port
               - "9003"
               - --secure-serving
+              - --cert-path
+              - "/etc/ssl/certs"
               - --model-server-metrics-scheme
               - https
               - --model-server-metrics-https-insecure-skip-verify
@@ -88,7 +90,7 @@ spec:
         volumes:
           - name: tls-certs
             secret:
-              secretName: "{{ ChildName .ObjectMeta.Name `-kserve-self-signed-certs` }}"
+              secretName: "{{ ChildName .ObjectMeta.Name .GlobalConfig.TLSSecretSuffix }}"
         dnsPolicy: ClusterFirst
         restartPolicy: Always
         terminationGracePeriodSeconds: 30

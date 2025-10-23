@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	certmanagerapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -159,7 +160,7 @@ func (r *LLMInferenceServiceReconciler) reconcile(ctx context.Context, llmSvc *v
 	ctx = log.IntoContext(ctx, logger)
 
 	// TODO(ctrl): add watch on CfgMap with predicate and cache tuning to trigger reconcile when it changes
-	config, configErr := LoadConfig(ctx, r.Clientset)
+	config, configErr := LoadConfig(ctx, r.Clientset, r.Client)
 	if configErr != nil {
 		return fmt.Errorf("failed to load ingress config: %w", configErr)
 	}
@@ -175,7 +176,7 @@ func (r *LLMInferenceServiceReconciler) reconcile(ctx context.Context, llmSvc *v
 	// We are only writing to status, so we can safely use the original object.
 	llmSvc.Spec = baseCfg.Spec
 
-	if err := r.reconcileWorkload(ctx, llmSvc, config.StorageConfig, config.CredentialConfig); err != nil {
+	if err := r.reconcileWorkload(ctx, llmSvc, config); err != nil {
 		return fmt.Errorf("failed to reconcile workload: %w", err)
 	}
 
@@ -282,6 +283,13 @@ func (r *LLMInferenceServiceReconciler) SetupWithManager(mgr ctrl.Manager) error
 		b = b.Owns(&monitoringv1.PodMonitor{}, builder.WithPredicates(childResourcesPredicate))
 	}
 
+	if err := certmanagerapi.AddToScheme(mgr.GetScheme()); err != nil {
+		return fmt.Errorf("failed to add CertManager APIs to scheme: %w", err)
+	}
+	if ok, err := utils.IsCrdAvailable(mgr.GetConfig(), certmanagerapi.SchemeGroupVersion.String(), "Certificate"); ok && err == nil {
+		b = b.Owns(&certmanagerapi.Certificate{}, builder.WithPredicates(childResourcesPredicate))
+	}
+
 	return b.Complete(r)
 }
 
@@ -293,7 +301,7 @@ func (r *LLMInferenceServiceReconciler) enqueueOnGatewayChange(logger logr.Logge
 
 		listNamespace := corev1.NamespaceAll
 
-		cfg, err := LoadConfig(ctx, r.Clientset)
+		cfg, err := LoadConfig(ctx, r.Clientset, r.Client)
 		if err != nil {
 			logger.Error(err, "Failed to load config")
 			return reqs

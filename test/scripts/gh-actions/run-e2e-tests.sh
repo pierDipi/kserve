@@ -45,7 +45,7 @@ pushd test/e2e >/dev/null
     pytest --capture=tee-sys -m "$MARKER" --ignore=qpext --log-cli-level=INFO -n $PARALLELISM --dist worksteal --network-layer $NETWORK_LAYER --ignore=explainer/
   else
     rc=0
-    pytest --capture=tee-sys -m "$MARKER" --ignore=qpext --log-cli-level=INFO -n $PARALLELISM --dist worksteal --network-layer $NETWORK_LAYER || rc=$?
+    pytest --capture=tee-sys --exitfirst -m "$MARKER" --ignore=qpext --log-cli-level=INFO -n $PARALLELISM --dist worksteal --network-layer $NETWORK_LAYER || rc=$?
     if [ $rc -ne 0 ]; then
       oc get authpolicies -A -oyaml || true
       oc get llmisvc -A -oyaml || true

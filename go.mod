@@ -5,6 +5,7 @@ go 1.24.1
 require (
 	cloud.google.com/go/storage v1.50.0
 	github.com/aws/aws-sdk-go v1.55.6
+	github.com/cert-manager/cert-manager v1.16.3
 	github.com/cloudevents/sdk-go/v2 v2.15.2
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/getkin/kin-openapi v0.131.0

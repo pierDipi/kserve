@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -41,6 +42,7 @@ import (
 // +kubebuilder:object:generate=false
 type LLMInferenceServiceConfigValidator struct {
 	ClientSet kubernetes.Interface
+	Client    client.Client
 }
 
 var _ webhook.CustomValidator = &LLMInferenceServiceConfigValidator{}
@@ -108,7 +110,7 @@ func (l *LLMInferenceServiceConfigValidator) validate(ctx context.Context, llmSv
 		return errors.New("spec.baseRefs is not a permitted field in LLMInferenceServiceConfig, support for recursive refs has been disabled")
 	}
 
-	config, err := llmisvc.LoadConfig(ctx, l.ClientSet)
+	config, err := llmisvc.LoadConfig(ctx, l.ClientSet, l.Client)
 	if err != nil {
 		logger.Error(err, "failed to load config")
 		return err

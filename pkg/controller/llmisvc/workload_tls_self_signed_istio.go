@@ -48,16 +48,21 @@ const (
 func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRules(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) error {
 	log.FromContext(ctx).Info("Reconciling Istio Destination Rules")
 
+	cfg, err := LoadConfig(ctx, r.Clientset, r.Client)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
 	if llmSvc.Spec.Router == nil {
 		// Delete destination rules.
 
-		if err := r.reconcileIstioDestinationRuleForScheduler(ctx, llmSvc); err != nil {
+		if err := r.reconcileIstioDestinationRuleForScheduler(ctx, llmSvc, cfg); err != nil {
 			return fmt.Errorf("failed to reconcile Istio destination rule for scheduler: %w", err)
 		}
-		if err := r.reconcileIstioDestinationRuleForWorkload(ctx, llmSvc); err != nil {
+		if err := r.reconcileIstioDestinationRuleForWorkload(ctx, llmSvc, cfg); err != nil {
 			return fmt.Errorf("failed to reconcile Istio destination rule for workload: %w", err)
 		}
-		if err := r.reconcileIstioDestinationRuleForShadowService(ctx, llmSvc); err != nil {
+		if err := r.reconcileIstioDestinationRuleForShadowService(ctx, llmSvc, cfg); err != nil {
 			return fmt.Errorf("failed to reconcile Istio destination rule for workload: %w", err)
 		}
 	}
@@ -71,11 +76,6 @@ func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRules(ctx conte
 		routes = append(routes, r.expectedHTTPRoute(ctx, llmSvc))
 	}
 
-	cfg, err := LoadConfig(ctx, r.Clientset)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
 	for _, route := range routes {
 		gateways, err := DiscoverGateways(ctx, r.Client, route)
 		if err != nil {
@@ -83,13 +83,13 @@ func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRules(ctx conte
 		}
 		for _, g := range gateways {
 			if g.gatewayClass != nil && cfg.isIstioGatewayController(string(g.gatewayClass.Spec.ControllerName)) {
-				if err := r.reconcileIstioDestinationRuleForScheduler(ctx, llmSvc); err != nil {
+				if err := r.reconcileIstioDestinationRuleForScheduler(ctx, llmSvc, cfg); err != nil {
 					return fmt.Errorf("failed to reconcile Istio destination rule for scheduler: %w", err)
 				}
-				if err := r.reconcileIstioDestinationRuleForWorkload(ctx, llmSvc); err != nil {
+				if err := r.reconcileIstioDestinationRuleForWorkload(ctx, llmSvc, cfg); err != nil {
 					return fmt.Errorf("failed to reconcile Istio destination rule for workload: %w", err)
 				}
-				if err := r.reconcileIstioDestinationRuleForShadowService(ctx, llmSvc); err != nil {
+				if err := r.reconcileIstioDestinationRuleForShadowService(ctx, llmSvc, cfg); err != nil {
 					return fmt.Errorf("failed to reconcile Istio destination rule for workload: %w", err)
 				}
 				return nil
@@ -100,8 +100,8 @@ func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRules(ctx conte
 	return nil
 }
 
-func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRuleForShadowService(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) error {
-	expected, err := r.expectedIstioDestinationRuleForShadowService(ctx, llmSvc)
+func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRuleForShadowService(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, cfg *Config) error {
+	expected, err := r.expectedIstioDestinationRuleForShadowService(ctx, llmSvc, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to get expected Istio destination rule for workload: %w", err)
 	}
@@ -118,16 +118,16 @@ func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRuleForShadowSe
 	return Reconcile(ctx, r, llmSvc, &istioapi.DestinationRule{}, expected, semanticDestinationRuleIsEqual)
 }
 
-func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRuleForWorkload(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) error {
-	expected := r.expectedIstioDestinationRuleForWorkload(ctx, llmSvc)
+func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRuleForWorkload(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, cfg *Config) error {
+	expected := r.expectedIstioDestinationRuleForWorkload(ctx, llmSvc, cfg)
 	if llmSvc.Spec.Router == nil {
 		return Delete(ctx, r, llmSvc, expected)
 	}
 	return Reconcile(ctx, r, llmSvc, &istioapi.DestinationRule{}, expected, semanticDestinationRuleIsEqual)
 }
 
-func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRuleForScheduler(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) error {
-	expected, err := r.expectedIstioDestinationRuleForScheduler(ctx, llmSvc)
+func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRuleForScheduler(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, cfg *Config) error {
+	expected, err := r.expectedIstioDestinationRuleForScheduler(ctx, llmSvc, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to get expected Istio destination rule for scheduler: %w", err)
 	}
@@ -137,7 +137,7 @@ func (r *LLMInferenceServiceReconciler) reconcileIstioDestinationRuleForSchedule
 	return Reconcile(ctx, r, llmSvc, &istioapi.DestinationRule{}, expected, semanticDestinationRuleIsEqual)
 }
 
-func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForScheduler(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) (*istioapi.DestinationRule, error) {
+func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForScheduler(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, cfg *Config) (*istioapi.DestinationRule, error) {
 	dr := &istioapi.DestinationRule{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kmeta.ChildName(llmSvc.GetName(), "-kserve-scheduler"),
@@ -155,8 +155,7 @@ func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForScheduler
 		Spec: istionetworking.DestinationRule{
 			TrafficPolicy: &istionetworking.TrafficPolicy{
 				Tls: &istionetworking.ClientTLSSettings{
-					Mode:               istionetworking.ClientTLSSettings_SIMPLE,
-					InsecureSkipVerify: &pbwrappers.BoolValue{Value: true},
+					Mode: istionetworking.ClientTLSSettings_SIMPLE,
 				},
 			},
 			// Export to all namespaces, this is the default, however, we keep the configuration explicit.
@@ -178,12 +177,18 @@ func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForScheduler
 		dr.Spec.Host = network.GetServiceHostname(name, llmSvc.GetNamespace())
 	}
 
+	if cfg.CertManagerConfig.IsEnabled() {
+		dr.Spec.TrafficPolicy.Tls.CaCertificates = cfg.CertManagerConfig.IstioCACertificatesPath
+	} else {
+		dr.Spec.TrafficPolicy.Tls.InsecureSkipVerify = &pbwrappers.BoolValue{Value: true}
+	}
+
 	log.FromContext(ctx).V(2).Info("Expected destination rule for scheduler", "destinationrule", dr)
 
 	return dr, nil
 }
 
-func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForShadowService(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) (*istioapi.DestinationRule, error) {
+func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForShadowService(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, cfg *Config) (*istioapi.DestinationRule, error) {
 	shadowSvc, err := r.getIstioShadowInferencePoolService(ctx, llmSvc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get istio inference pool service: %w", err)
@@ -206,8 +211,7 @@ func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForShadowSer
 		Spec: istionetworking.DestinationRule{
 			TrafficPolicy: &istionetworking.TrafficPolicy{
 				Tls: &istionetworking.ClientTLSSettings{
-					Mode:               istionetworking.ClientTLSSettings_SIMPLE,
-					InsecureSkipVerify: &pbwrappers.BoolValue{Value: true},
+					Mode: istionetworking.ClientTLSSettings_SIMPLE,
 				},
 			},
 			// Export to all namespaces, this is the default, however, we keep the configuration explicit.
@@ -218,12 +222,18 @@ func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForShadowSer
 		dr.Spec.Host = network.GetServiceHostname(shadowSvc.GetName(), shadowSvc.GetNamespace())
 	}
 
+	if cfg.CertManagerConfig.IsEnabled() {
+		dr.Spec.TrafficPolicy.Tls.CaCertificates = cfg.CertManagerConfig.IstioCACertificatesPath
+	} else {
+		dr.Spec.TrafficPolicy.Tls.InsecureSkipVerify = &pbwrappers.BoolValue{Value: true}
+	}
+
 	log.FromContext(ctx).V(2).Info("Expected destination rule for workload shadow service", "destinationrule", dr)
 
 	return dr, nil
 }
 
-func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForWorkload(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService) *istioapi.DestinationRule {
+func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForWorkload(ctx context.Context, llmSvc *v1alpha1.LLMInferenceService, cfg *Config) *istioapi.DestinationRule {
 	dr := &istioapi.DestinationRule{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kmeta.ChildName(llmSvc.GetName(), "-kserve-workload-svc"),
@@ -242,13 +252,18 @@ func (r *LLMInferenceServiceReconciler) expectedIstioDestinationRuleForWorkload(
 			Host: network.GetServiceHostname(kmeta.ChildName(llmSvc.GetName(), "-kserve-workload-svc"), llmSvc.GetNamespace()),
 			TrafficPolicy: &istionetworking.TrafficPolicy{
 				Tls: &istionetworking.ClientTLSSettings{
-					Mode:               istionetworking.ClientTLSSettings_SIMPLE,
-					InsecureSkipVerify: &pbwrappers.BoolValue{Value: true},
+					Mode: istionetworking.ClientTLSSettings_SIMPLE,
 				},
 			},
 			// Export to all namespaces, this is the default, however, we keep the configuration explicit.
 			ExportTo: []string{"*"},
 		},
+	}
+
+	if cfg.CertManagerConfig.IsEnabled() {
+		dr.Spec.TrafficPolicy.Tls.CaCertificates = cfg.CertManagerConfig.IstioCACertificatesPath
+	} else {
+		dr.Spec.TrafficPolicy.Tls.InsecureSkipVerify = &pbwrappers.BoolValue{Value: true}
 	}
 
 	log.FromContext(ctx).V(2).Info("Expected destination rule for workload service", "destinationrule", dr)

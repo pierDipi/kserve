@@ -21,14 +21,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"text/template"
+	"time"
 
+	certmanagerapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kserve/kserve/pkg/constants"
 	"github.com/kserve/kserve/pkg/types"
@@ -152,6 +157,68 @@ type ResourceConfig struct {
 	MemoryLimit   string `json:"memoryLimit,omitempty"`
 	CPURequest    string `json:"cpuRequest,omitempty"`
 	MemoryRequest string `json:"memoryRequest,omitempty"`
+}
+
+const (
+	CertManagerKeyName = "cert-manager"
+)
+
+type CertManagerConfig struct {
+	Enabled     bool            `json:"enabled"`
+	Duration    metav1.Duration `json:"duration"`
+	IssuerName  string          `json:"issuerName"`
+	IssuerKind  string          `json:"issuerKind"`
+	IssuerGroup string          `json:"issuerGroup"`
+
+	IstioCACertificatesPath   string `json:"istioCACertificatesPath,omitempty"`
+	SidecarCACertificatesPath string `json:"sidecarCACertificatesPath,omitempty"`
+}
+
+func NewCertManagerConfig(ctx context.Context, isvcConfigMap *corev1.ConfigMap, cli client.Client) (*CertManagerConfig, error) {
+	cfg := &CertManagerConfig{
+		Enabled:                   false,
+		Duration:                  metav1.Duration{Duration: time.Hour * 24 * 30},
+		IssuerName:                constants.GetEnvOrDefault("CERT_MANAGER_ISSUER_NAME", "openshift-ai-internal"),
+		IssuerKind:                constants.GetEnvOrDefault("CERT_MANAGER_ISSUER_KIND", "ClusterIssuer"),
+		IssuerGroup:               constants.GetEnvOrDefault("CERT_MANAGER_ISSUER_GROUP", "cert-manager.io"),
+		IstioCACertificatesPath:   constants.GetEnvOrDefault("ISTIO_CA_CERTIFICATES_PATH", "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"),
+		SidecarCACertificatesPath: constants.GetEnvOrDefault("SIDECAR_CA_CERTIFICATES_PATH", "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"),
+	}
+
+	if d, ok := isvcConfigMap.Data[CertManagerKeyName]; ok {
+		err := json.Unmarshal([]byte(d), cfg)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse %s config json: %w", CertManagerKeyName, err)
+		}
+	}
+
+	var obj client.Object
+	namespace := ""
+	if cfg.IssuerKind == "ClusterIssuer" {
+		obj = &certmanagerapi.ClusterIssuer{}
+	} else if cfg.IssuerKind == "Issuer" {
+		obj = &certmanagerapi.Issuer{}
+		namespace = isvcConfigMap.Namespace
+	}
+	if obj == nil {
+		return cfg, nil
+	}
+
+	err := cli.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cfg.IssuerName}, obj)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get %q %q: %v", reflect.TypeOf(obj), cfg.IssuerName, err)
+		}
+		return cfg, nil
+	}
+	// When the issuer is found, enable cert-manager.
+	cfg.Enabled = true
+
+	return cfg, nil
+}
+
+func (cfg *CertManagerConfig) IsEnabled() bool {
+	return cfg != nil && cfg.Enabled
 }
 
 // +kubebuilder:object:generate=false
