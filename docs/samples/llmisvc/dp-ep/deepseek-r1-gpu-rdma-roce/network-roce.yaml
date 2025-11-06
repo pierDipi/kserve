@@ -45,6 +45,151 @@ spec:
   trust: "on"
   linkState: "enable"
 ---
+# p3 - Sibling of p2
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: sriov-p3-policy
+  namespace: openshift-sriov-network-operator
+spec:
+  deviceType: netdevice
+  isRdma: true
+  linkType: eth
+  mtu: 9000
+  nicSelector:
+    deviceID: 101d
+    rootDevices:
+      - 0000:5c:00.1
+    pfNames:
+      - p3
+    vendor: 15b3
+  nodeSelector:
+    feature.node.kubernetes.io/pci-15b3.present: 'true'
+    feature.node.kubernetes.io/pci-15b3.sriov.capable: 'true'
+    feature.node.kubernetes.io/rdma.available: 'true'
+    feature.node.kubernetes.io/rdma.capable: 'true'
+  numVfs: 8
+  priority: 97
+  resourceName: p3rdma
+---
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: roce-p3
+  namespace: openshift-sriov-network-operator
+spec:
+  ipam: |-
+    {
+      "type": "whereabouts",
+      "range": "10.0.132.0/24",
+      "range_start": "10.0.132.64",
+      "range_end": "10.0.132.127"
+    }
+  logLevel: info
+  networkNamespace: 'llm-test'
+  resourceName: p3rdma
+  spoofChk: "off"
+  trust: "on"
+  linkState: "enable"
+---
+# p4, p5 - NIC pair on 0000:9b
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: sriov-p4-policy
+  namespace: openshift-sriov-network-operator
+spec:
+  deviceType: netdevice
+  isRdma: true
+  linkType: eth
+  mtu: 9000
+  nicSelector:
+    deviceID: 101d
+    rootDevices:
+      - 0000:9b:00.0
+      - 0000:9b:00.1
+    pfNames:
+      - p4
+      - p5
+    vendor: 15b3
+  nodeSelector:
+    feature.node.kubernetes.io/pci-15b3.present: 'true'
+    feature.node.kubernetes.io/pci-15b3.sriov.capable: 'true'
+    feature.node.kubernetes.io/rdma.available: 'true'
+    feature.node.kubernetes.io/rdma.capable: 'true'
+  numVfs: 2
+  priority: 96
+  resourceName: p4rdma
+---
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: roce-p4
+  namespace: openshift-sriov-network-operator
+spec:
+  ipam: |-
+    {
+      "type": "whereabouts",
+      "range": "10.0.132.0/24",
+      "range_start": "10.0.132.128",
+      "range_end": "10.0.132.191"
+    }
+  logLevel: info
+  networkNamespace: 'llm-test'
+  resourceName: p4rdma
+  spoofChk: "off"
+  trust: "on"
+  linkState: "enable"
+---
+# p6, p7 - NIC pair on 0000:19
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: sriov-p6-policy
+  namespace: openshift-sriov-network-operator
+spec:
+  deviceType: netdevice
+  isRdma: true
+  linkType: eth
+  mtu: 9000
+  nicSelector:
+    deviceID: 101d
+    rootDevices:
+      - 0000:19:00.0
+#      - 0000:19:00.1
+    pfNames:
+      - p6
+#      - p7
+    vendor: 15b3
+  nodeSelector:
+    feature.node.kubernetes.io/pci-15b3.present: 'true'
+    feature.node.kubernetes.io/pci-15b3.sriov.capable: 'true'
+    feature.node.kubernetes.io/rdma.available: 'true'
+    feature.node.kubernetes.io/rdma.capable: 'true'
+  numVfs: 2
+  priority: 95
+  resourceName: p6rdma
+---
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: roce-p6
+  namespace: openshift-sriov-network-operator
+spec:
+  ipam: |-
+    {
+      "type": "whereabouts",
+      "range": "10.0.132.0/24",
+      "range_start": "10.0.132.192",
+      "range_end": "10.0.132.254"
+    }
+  logLevel: info
+  networkNamespace: 'llm-test'
+  resourceName: p6rdma
+  spoofChk: "off"
+  trust: "on"
+  linkState: "enable"
+---
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:

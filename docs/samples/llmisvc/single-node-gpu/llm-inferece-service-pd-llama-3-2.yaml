@@ -1,0 +1,118 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  annotations:
+    security.opendatahub.io/enable-auth: "false"
+  name: llama-3-2-3b-1
+spec:
+  model:
+    name: llama-3-2-3b-1
+    uri: oci://quay.io/redhat-ai-services/modelcar-catalog:llama-3.2-3b-instruct-quantized.w8a8
+  replicas: 1
+  router:
+    gateway: { }
+    route: { }
+    scheduler:
+      template:
+        containers:
+          - name: main
+            args:
+              - --pool-name
+              - "{{ ChildName .ObjectMeta.Name `-inference-pool` }}"
+              - --pool-namespace
+              - "{{ .ObjectMeta.Namespace }}"
+              - --pool-group
+              - inference.networking.x-k8s.io
+              - --zap-encoder
+              - json
+              - --grpc-port
+              - "9002"
+              - --grpc-health-port
+              - "9003"
+              - --secure-serving
+              - --model-server-metrics-scheme
+              - https
+              - --cert-path
+              - /var/run/kserve/tls
+              - --config-text
+              - |
+                # Always do P/D in this example (threshold 0)
+                apiVersion: inference.networking.x-k8s.io/v1alpha1
+                kind: EndpointPickerConfig
+                plugins:
+                  - type: prefill-header-handler
+                  - type: prefill-filter
+                  - type: decode-filter
+                  - type: prefix-cache-scorer
+                  - type: max-score-picker
+                  - type: queue-scorer
+                    parameters:
+                      hashBlockSize: 5
+                      maxPrefixBlocksToMatch: 256
+                      lruCapacityPerServer: 31250
+                  - type: pd-profile-handler
+                    parameters:
+                      threshold: 0
+                      hashBlockSize: 5
+                schedulingProfiles:
+                  - name: prefill
+                    plugins:
+                      - pluginRef: prefill-filter
+                      - pluginRef: queue-scorer
+                        weight: 1.0
+                      - pluginRef: prefix-cache-scorer
+                        weight: 1.0
+                      - pluginRef: max-score-picker
+                  - name: decode
+                    plugins:
+                      - pluginRef: decode-filter
+                      - pluginRef: queue-scorer
+                        weight: 1.0
+                      - pluginRef: prefix-cache-scorer
+                        weight: 1.0
+                      - pluginRef: max-score-picker
+
+
+  template:
+    containers:
+      - env:
+          - name: VLLM_LOGGING_LEVEL
+            value: DEBUG
+          - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: VLLM_ADDITIONAL_ARGS
+            value: "--kv_transfer_config '{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\"}'"
+        name: main
+        resources:
+          limits:
+            cpu: "2"
+            memory: 6Gi
+            nvidia.com/gpu: "1"
+          requests:
+            cpu: "2"
+            memory: 2Gi
+            nvidia.com/gpu: "1"
+  prefill:
+    template:
+      containers:
+        - name: main
+          env:
+            - name: VLLM_LOGGING_LEVEL
+              value: DEBUG
+            - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: VLLM_ADDITIONAL_ARGS
+              value: "--kv_transfer_config '{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\"}'"
+          resources:
+            limits:
+              cpu: "2"
+              memory: 6Gi
+              nvidia.com/gpu: "1"
+            requests:
+              cpu: "2"
+              memory: 2Gi
+              nvidia.com/gpu: "1"

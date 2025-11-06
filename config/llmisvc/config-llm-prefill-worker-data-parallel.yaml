@@ -75,10 +75,11 @@ spec:
                 if [ ${#active_hcas[@]} -gt 0 ]; then
                     # Join the array elements with a comma
                     hcas=$(IFS=,; echo "${active_hcas[*]}")
+                    ucx_hcas_list=$(IFS=,; echo "${ucx_hcas[*]}")
                     echo "[Infer RoCE] Setting active HCAs: ${hcas}"
                     export NCCL_IB_HCA=${NCCL_IB_HCA:-${hcas}}
-                    export NVSHMEM_HCA_LIST=${NVSHMEM_HCA_LIST:-${ucx_hcas}}
-                    export UCX_NET_DEVICES=${UCX_NET_DEVICES:-${ucx_hcas}}
+                    export NVSHMEM_HCA_LIST=${NVSHMEM_HCA_LIST:-${ucx_hcas_list}}
+                    export UCX_NET_DEVICES=${UCX_NET_DEVICES:-${ucx_hcas_list}}
 
                     echo "[Infer RoCE] NCCL_IB_HCA=${NCCL_IB_HCA}"
                     echo "[Infer RoCE] NVSHMEM_HCA_LIST=${NVSHMEM_HCA_LIST}"
@@ -312,10 +313,11 @@ spec:
                 if [ ${#active_hcas[@]} -gt 0 ]; then
                     # Join the array elements with a comma
                     hcas=$(IFS=,; echo "${active_hcas[*]}")
+                    ucx_hcas_list=$(IFS=,; echo "${ucx_hcas[*]}")
                     echo "[Infer RoCE] Setting active HCAs: ${hcas}"
                     export NCCL_IB_HCA=${NCCL_IB_HCA:-${hcas}}
-                    export NVSHMEM_HCA_LIST=${NVSHMEM_HCA_LIST:-${ucx_hcas}}
-                    export UCX_NET_DEVICES=${UCX_NET_DEVICES:-${ucx_hcas}}
+                    export NVSHMEM_HCA_LIST=${NVSHMEM_HCA_LIST:-${ucx_hcas_list}}
+                    export UCX_NET_DEVICES=${UCX_NET_DEVICES:-${ucx_hcas_list}}
 
                     echo "[Infer RoCE] NCCL_IB_HCA=${NCCL_IB_HCA}"
                     echo "[Infer RoCE] NVSHMEM_HCA_LIST=${NVSHMEM_HCA_LIST}"
