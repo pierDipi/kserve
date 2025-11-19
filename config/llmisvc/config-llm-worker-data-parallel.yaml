@@ -72,11 +72,52 @@ spec:
 
               # Check if we found any active HCAs
               if [ ${#active_hcas[@]} -gt 0 ]; then
+                  # Filter NCCL_IB_HCA based on NCCL_SOCKET_IFNAME if set
+                  nccl_hcas=("${active_hcas[@]}")
+
+                  if [ -n "${NCCL_SOCKET_IFNAME}" ]; then
+                      echo "[Infer RoCE] NCCL_SOCKET_IFNAME is set: ${NCCL_SOCKET_IFNAME}"
+                      echo "[Infer RoCE] Filtering HCAs to match network interfaces..."
+
+                      # Split NCCL_SOCKET_IFNAME by comma
+                      IFS=',' read -ra socket_ifaces <<< "${NCCL_SOCKET_IFNAME}"
+
+                      filtered_nccl_hcas=()
+                      for hca in "${active_hcas[@]}"; do
+                          # Get the network interface associated with this HCA
+                          # Look for the netdev in the HCA's sysfs directory
+                          netdev_path="/sys/class/infiniband/${hca}/device/net"
+                          if [ -d "$netdev_path" ]; then
+                              for netdev in "$netdev_path"/*; do
+                                  if [ -d "$netdev" ]; then
+                                      iface_name=$(basename "$netdev")
+                                      # Check if this interface is in NCCL_SOCKET_IFNAME
+                                      for socket_iface in "${socket_ifaces[@]}"; do
+                                          # Trim whitespace from socket_iface
+                                          socket_iface=$(echo "$socket_iface" | xargs)
+                                          if [ "$iface_name" = "$socket_iface" ]; then
+                                              echo "[Infer RoCE] HCA ${hca} matches interface ${iface_name}"
+                                              filtered_nccl_hcas+=("$hca")
+                                              break
+                                          fi
+                                      done
+                                  fi
+                              done
+                          fi
+                      done
+
+                      if [ ${#filtered_nccl_hcas[@]} -gt 0 ]; then
+                          nccl_hcas=("${filtered_nccl_hcas[@]}")
+                          echo "[Infer RoCE] Filtered NCCL HCAs based on NCCL_SOCKET_IFNAME: ${nccl_hcas[*]}"
+                      else
+                          echo "[Infer RoCE] WARNING: No HCAs matched NCCL_SOCKET_IFNAME, using all active HCAs"
+                      fi
+                  fi
+
                   # Join the array elements with a comma
-                  hcas=$(IFS=,; echo "${active_hcas[*]}")
+                  hcas=$(IFS=,; echo "${nccl_hcas[*]}")
                   ucx_hcas_list=$(IFS=,; echo "${ucx_hcas[*]}")
-                  echo "[Infer RoCE] Setting active HCAs: ${hcas}"
-                  export NCCL_IB_HCA=${NCCL_IB_HCA:-"=${ucx_hcas_list}"}
+                  export NCCL_IB_HCA=${NCCL_IB_HCA:-"=${nccl_hcas}"}
                   export NVSHMEM_HCA_LIST=${NVSHMEM_HCA_LIST:-${ucx_hcas_list}}
                   export UCX_NET_DEVICES=${UCX_NET_DEVICES:-${ucx_hcas_list}}
 
@@ -312,11 +353,52 @@ spec:
 
               # Check if we found any active HCAs
               if [ ${#active_hcas[@]} -gt 0 ]; then
+                  # Filter NCCL_IB_HCA based on NCCL_SOCKET_IFNAME if set
+                  nccl_hcas=("${active_hcas[@]}")
+
+                  if [ -n "${NCCL_SOCKET_IFNAME}" ]; then
+                      echo "[Infer RoCE] NCCL_SOCKET_IFNAME is set: ${NCCL_SOCKET_IFNAME}"
+                      echo "[Infer RoCE] Filtering HCAs to match network interfaces..."
+
+                      # Split NCCL_SOCKET_IFNAME by comma
+                      IFS=',' read -ra socket_ifaces <<< "${NCCL_SOCKET_IFNAME}"
+
+                      filtered_nccl_hcas=()
+                      for hca in "${active_hcas[@]}"; do
+                          # Get the network interface associated with this HCA
+                          # Look for the netdev in the HCA's sysfs directory
+                          netdev_path="/sys/class/infiniband/${hca}/device/net"
+                          if [ -d "$netdev_path" ]; then
+                              for netdev in "$netdev_path"/*; do
+                                  if [ -d "$netdev" ]; then
+                                      iface_name=$(basename "$netdev")
+                                      # Check if this interface is in NCCL_SOCKET_IFNAME
+                                      for socket_iface in "${socket_ifaces[@]}"; do
+                                          # Trim whitespace from socket_iface
+                                          socket_iface=$(echo "$socket_iface" | xargs)
+                                          if [ "$iface_name" = "$socket_iface" ]; then
+                                              echo "[Infer RoCE] HCA ${hca} matches interface ${iface_name}"
+                                              filtered_nccl_hcas+=("$hca")
+                                              break
+                                          fi
+                                      done
+                                  fi
+                              done
+                          fi
+                      done
+
+                      if [ ${#filtered_nccl_hcas[@]} -gt 0 ]; then
+                          nccl_hcas=("${filtered_nccl_hcas[@]}")
+                          echo "[Infer RoCE] Filtered NCCL HCAs based on NCCL_SOCKET_IFNAME: ${nccl_hcas[*]}"
+                      else
+                          echo "[Infer RoCE] WARNING: No HCAs matched NCCL_SOCKET_IFNAME, using all active HCAs"
+                      fi
+                  fi
+
                   # Join the array elements with a comma
-                  hcas=$(IFS=,; echo "${active_hcas[*]}")
+                  hcas=$(IFS=,; echo "${nccl_hcas[*]}")
                   ucx_hcas_list=$(IFS=,; echo "${ucx_hcas[*]}")
-                  echo "[Infer RoCE] Setting active HCAs: ${hcas}"
-                  export NCCL_IB_HCA=${NCCL_IB_HCA:-"=${ucx_hcas_list}"}
+                  export NCCL_IB_HCA=${NCCL_IB_HCA:-"=${nccl_hcas}"}
                   export NVSHMEM_HCA_LIST=${NVSHMEM_HCA_LIST:-${ucx_hcas_list}}
                   export UCX_NET_DEVICES=${UCX_NET_DEVICES:-${ucx_hcas_list}}
 

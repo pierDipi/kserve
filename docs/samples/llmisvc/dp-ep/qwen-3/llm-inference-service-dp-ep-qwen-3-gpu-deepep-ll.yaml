@@ -5,7 +5,7 @@ metadata:
   annotations:
     # See network-roce.yaml as an example (cluster and hardware specific)
     # k8s.v1.cni.cncf.io/networks: '[{"name": "multi-nic-compute", "namespace": "openshift-sriov-network-operator" }]' # roce-p2, roce-p2, roce-p2, roce-p2, roce-p2, roce-p2, roce-p2, roce-p2 #, roce-p4, roce-p6
-    k8s.v1.cni.cncf.io/networks: roce-p2 , roce-p2 #, roce-p2, roce-p2, roce-p2, roce-p2, roce-p2, roce-p2 #, roce-p6
+    k8s.v1.cni.cncf.io/networks: roce-p4 , roce-p4 #, roce-p2, roce-p2, roce-p2, roce-p2, roce-p2, roce-p2 #, roce-p6
 spec:
   model:
     # Initialize PVC following the example in /docs/samples/storage/pvc-init (recommended) or use the HuggingFace
@@ -65,7 +65,7 @@ spec:
           - name: NVSHMEM_BOOTSTRAP_TIMEOUT
             value: "300"
           - name: NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME
-            value: net1
+            value: net2
           - name: NVSHMEM_IB_GID_INDEX
             value: "3"
           - name: NVSHMEM_USE_IBGDA
@@ -160,7 +160,7 @@ spec:
           - name: NVSHMEM_BOOTSTRAP_TIMEOUT
             value: "300"
           - name: NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME
-            value: net1
+            value: net2
           - name: NVSHMEM_IB_GID_INDEX
             value: "3"
           - name: NVSHMEM_USE_IBGDA

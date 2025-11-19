@@ -19,6 +19,7 @@ spec:
     expert: true
     tensor: 1
   router:
+<<<<<<< Updated upstream
     scheduler:
       template:
         containers:
@@ -74,6 +75,9 @@ spec:
                   - pluginRef: load-aware-scorer
                     weight: 1.0
                   - pluginRef: max-score-picker
+=======
+    scheduler: { }
+>>>>>>> Stashed changes
     route: { }
     gateway: { }
   template:

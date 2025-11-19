@@ -8,7 +8,11 @@ metadata:
 spec:
   backoffLimit: 1
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: llminferenceservice
     spec:
+      serviceAccountName: lm-eval-access
       containers:
         - name: lm-eval-container
           image: ghcr.io/astral-sh/uv:0.8-python3.12-bookworm
@@ -31,7 +35,11 @@ spec:
             # Set the HOME directory to a writable location to avoid permission errors.
             - name: HOME
               value: "/tmp"
-          command: ["/bin/sh", "-c"]
+          volumeMounts:
+            - name: sa-token
+              mountPath: /var/run/secrets/tokens
+              readOnly: true
+          command: ["/bin/bash", "-c"]
           # The script to be executed. The '|' allows for a multi-line string.
           args:
             - |
@@ -57,8 +65,20 @@ spec:
               echo "Model for evaluation: ${MODEL}"
               echo "Target URL: ${BASE_URL}"
               
+              # Read the ServiceAccount token
+              TOKEN=$(cat /var/run/secrets/tokens/sa-token)
+
+              # Debug: Print token info (first/last few chars only for security)
+              echo "Token loaded (first 20 chars): ${TOKEN:0:20}..."
+              echo "Token loaded (last 20 chars): ...${TOKEN: -20}"
+
+              # Test the token with curl first to verify it works
+              echo "Testing token with curl..."
+              curl -v -H "Authorization: Bearer ${TOKEN}" "${BASE_URL}/v1/completions" -d '{"model":"'"${MODEL}"'","prompt":"test","max_tokens":1}' -H "Content-Type: application/json" || echo "Curl test completed with exit code: $?"
+
               # Execute the lm_eval command with the specified arguments.
-              # The model arguments are passed as a comma-separated string.
+              # The model arguments are passed as a JSON string.
+              # The token is passed via header parameter (singular, as per lm_eval API)
               lm_eval --model local-completions --tasks "${TASKS}" \
                 --model_args model=${MODEL},base_url=${BASE_URL}/v1/completions,num_concurrent=${NUM_CONCURRENT},max_retries=3,tokenized_requests=False
               
@@ -67,6 +87,13 @@ spec:
             requests:
               cpu: "2"
               memory: "512Mi"
+      volumes:
+        - name: sa-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: sa-token
+                  expirationSeconds: 3600
       # The restart policy for the Pod. 'Never' is suitable for one-off tasks.
       # 'OnFailure' could also be used if you want the Pod to retry on its own.
       restartPolicy: Never

@@ -26,6 +26,8 @@ spec:
               - "{{ ChildName .ObjectMeta.Name `-inference-pool` }}"
               - --pool-namespace
               - "{{ .ObjectMeta.Namespace }}"
+              - --pool-group
+              - inference.networking.x-k8s.io
               - --zap-encoder
               - json
               - --grpc-port
@@ -35,7 +37,6 @@ spec:
               - --secure-serving
               - --model-server-metrics-scheme
               - https
-              - --model-server-metrics-https-insecure-skip-verify
               - --cert-path
               - /etc/ssl/certs
               - --config-text
@@ -45,6 +46,8 @@ spec:
                 kind: EndpointPickerConfig
                 plugins:
                 - type: single-profile-handler
+                - type: queue-scorer
+                - type: kv-cache-utilization-scorer
                 - type: prefix-cache-scorer
                   parameters:
                     mode: cache_tracking  # Real-time KV cache tracking via ZMQ events
@@ -57,16 +60,15 @@ spec:
                         metricsLoggingInterval: 60000000000   # Log metrics every 60 seconds (in nanoseconds)
                       tokenizersPoolConfig:
                         tokenizersCacheDir: /mnt/tokenizers
-                - type: load-aware-scorer
-                - type: max-score-picker
                 schedulingProfiles:
                   - name: default
                     plugins:
-                      - pluginRef: prefix-cache-scorer
+                      - pluginRef: queue-scorer
                         weight: 2.0
-                      - pluginRef: load-aware-scorer
-                        weight: 1.0
-                      - pluginRef: max-score-picker
+                      - pluginRef: kv-cache-utilization-scorer
+                        weight: 2.0
+                      - pluginRef: prefix-cache-scorer
+                        weight: 3.0
     route: { }
     gateway: { }
   template:

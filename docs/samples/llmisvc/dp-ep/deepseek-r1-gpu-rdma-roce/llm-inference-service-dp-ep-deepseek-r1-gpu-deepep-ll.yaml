@@ -62,7 +62,7 @@ spec:
           - name: NVSHMEM_BOOTSTRAP_TIMEOUT
             value: "300"
           - name: NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME
-            value: net1
+            value: net2
           - name: NVSHMEM_IB_GID_INDEX
             value: "3"
           - name: NVSHMEM_USE_IBGDA
@@ -157,7 +157,7 @@ spec:
           - name: NVSHMEM_BOOTSTRAP_TIMEOUT
             value: "300"
           - name: NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME
-            value: net1
+            value: net2
           - name: NVSHMEM_IB_GID_INDEX
             value: "3"
           - name: NVSHMEM_USE_IBGDA

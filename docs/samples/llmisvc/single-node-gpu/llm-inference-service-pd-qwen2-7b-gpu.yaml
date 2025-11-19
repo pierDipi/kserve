@@ -14,6 +14,7 @@ spec:
   router:
     route: { }
     gateway: { }
+<<<<<<< Updated upstream
     scheduler:
       template:
         containers:
@@ -69,6 +70,9 @@ spec:
                         weight: 1.0
                       - pluginRef: max-score-picker
 
+=======
+    scheduler: { }
+>>>>>>> Stashed changes
   template:
     # This affinity rule ensures that the KV transfer happens over the RDMA network because if the pods are placed
     # on the same node it will go over NVLink.

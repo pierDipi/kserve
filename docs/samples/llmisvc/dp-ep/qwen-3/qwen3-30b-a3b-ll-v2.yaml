@@ -1,0 +1,135 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"serving.kserve.io/v1alpha1","kind":"LLMInferenceService","metadata":{"annotations":{"k8s.v1.cni.cncf.io/networks":"multi-nic-compute"},"name":"qwen3-30b-a3b-ll","namespace":"llm-test"},"spec":{"model":{"name":"Qwen/Qwen3-30B-A3B","uri":"pvc://llm-test-pvc-qwen"},"parallelism":{"data":16,"dataLocal":8,"expert":true,"tensor":1},"replicas":1,"router":{"gateway":{},"route":{},"scheduler":{}},"template":{"containers":[{"env":[{"name":"VLLM_API_SERVER_COUNT","value":"1"},{"name":"VLLM_LOGGING_LEVEL","value":"DEBUG"},{"name":"KSERVE_INFER_ROCE","value":"true"},{"name":"CUDA_DEVICE_ORDER","value":"PCI_BUS_ID"},{"name":"VLLM_ADDITIONAL_ARGS","value":"--gpu-memory-utilization 0.90 --max-model-len 8192"},{"name":"VLLM_ALL2ALL_BACKEND","value":"deepep_low_latency"},{"name":"PYTORCH_CUDA_ALLOC_CONF","value":"expandable_segments:True"},{"name":"NCCL_IB_GID_INDEX","value":"3"},{"name":"NCCL_SOCKET_IFNAME","value":"net1-1"},{"name":"NCCL_DEBUG","value":"INFO"},{"name":"NVSHMEM_ENABLE_NIC_PE_MAPPING","value":"1"},{"name":"NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME","value":"net1-0"},{"name":"LD_LIBRARY_PATH","value":"/opt/nvshmem-3.3.20/lib:/opt/vllm/lib64/python/site-packages/torch/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/lib:/usr/local/lib64:/lib"}],"image":"ghcr.io/llm-d/llm-d-cuda-dev@sha256:fa4dc9af37d3dcf92c271af3027c980cb17678317d67bbc484799f76d57321b7","livenessProbe":{"failureThreshold":3,"httpGet":{"path":"/health","port":8000,"scheme":"HTTPS"},"initialDelaySeconds":4800,"periodSeconds":10,"timeoutSeconds":10},"name":"main","resources":{"limits":{"cpu":128,"ephemeral-storage":"800Gi","memory":"512Gi","nvidia.com/gpu":"8","rdma/roce_gdr":"2"},"requests":{"cpu":64,"ephemeral-storage":"800Gi","memory":"256Gi","nvidia.com/gpu":"8","rdma/roce_gdr":"2"}}}],"serviceAccountName":"hfsa"},"worker":{"containers":[{"env":[{"name":"VLLM_API_SERVER_COUNT","value":"1"},{"name":"VLLM_LOGGING_LEVEL","value":"DEBUG"},{"name":"KSERVE_INFER_ROCE","value":"true"},{"name":"CUDA_DEVICE_ORDER","value":"PCI_BUS_ID"},{"name":"VLLM_ADDITIONAL_ARGS","value":"--gpu-memory-utilization 0.90 --max-model-len 8192"},{"name":"VLLM_ALL2ALL_BACKEND","value":"deepep_low_latency"},{"name":"PYTORCH_CUDA_ALLOC_CONF","value":"expandable_segments:True"},{"name":"NCCL_IB_GID_INDEX","value":"3"},{"name":"NCCL_SOCKET_IFNAME","value":"net1-1"},{"name":"NCCL_DEBUG","value":"INFO"},{"name":"NVSHMEM_ENABLE_NIC_PE_MAPPING","value":"1"},{"name":"NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME","value":"net1-0"},{"name":"LD_LIBRARY_PATH","value":"/opt/nvshmem-3.3.20/lib:/opt/vllm/lib64/python/site-packages/torch/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/lib:/usr/local/lib64:/lib"}],"image":"ghcr.io/llm-d/llm-d-cuda-dev@sha256:fa4dc9af37d3dcf92c271af3027c980cb17678317d67bbc484799f76d57321b7","name":"main","resources":{"limits":{"cpu":128,"ephemeral-storage":"800Gi","memory":"512Gi","nvidia.com/gpu":"8","rdma/roce_gdr":"2"},"requests":{"cpu":64,"ephemeral-storage":"800Gi","memory":"256Gi","nvidia.com/gpu":"8","rdma/roce_gdr":"2"}}}],"serviceAccountName":"hfsa"}}}
+    security.opendatahub.io/enable-auth: "false"
+  creationTimestamp: "2025-10-31T16:57:43Z"
+  finalizers:
+  - serving.kserve.io/llmisvc-finalizer
+  generation: 50
+  name: qwen3-30b-a3b-ll
+  namespace: llm-test
+  resourceVersion: "107597549"
+  uid: a2607b42-f292-4043-b3ae-b25f50a9004f
+spec:
+  model:
+    name: Qwen/Qwen3-30B-A3B
+    uri: pvc://llm-test-pvc-qwen
+  parallelism:
+    data: 16
+    dataLocal: 8
+    expert: true
+    tensor: 1
+  replicas: 1
+  router:
+    gateway: {}
+    route: {}
+    scheduler: {}
+  template:
+    containers:
+    - env:
+      - name: KSERVE_INFER_ROCE
+        value: "false"
+      - name: NCCL_DEBUG
+        value: INFO
+      - name: NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME
+        value: net1-0
+      - name: NCCL_IB_HCA
+        value: =mlx5_0,mlx5_1,mlx5_10,mlx5_11,mlx5_12,mlx5_13,mlx5_14,mlx5_15,mlx5_16,mlx5_17,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_8,mlx5_9
+      image: ghcr.io/llm-d/llm-d-cuda:v0.3.1
+      livenessProbe:
+        failureThreshold: 3
+        httpGet:
+          path: /health
+          port: 8000
+          scheme: HTTPS
+        initialDelaySeconds: 4800
+        periodSeconds: 10
+        timeoutSeconds: 10
+      name: main
+      resources:
+        limits:
+          cpu: 128
+          ephemeral-storage: 800Gi
+          memory: 512Gi
+          nvidia.com/gpu: "8"
+          rdma/roce_gdr: "2"
+        requests:
+          cpu: 64
+          ephemeral-storage: 800Gi
+          memory: 256Gi
+          nvidia.com/gpu: "8"
+          rdma/roce_gdr: "2"
+    serviceAccountName: hfsa
+  worker:
+    containers:
+    - env:
+      - name: KSERVE_INFER_ROCE
+        value: "false"
+      - name: NCCL_DEBUG
+        value: INFO
+      - name: NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME
+        value: net1-0
+      - name: NCCL_IB_HCA
+        value: =mlx5_0,mlx5_1,mlx5_10,mlx5_11,mlx5_12,mlx5_13,mlx5_14,mlx5_15,mlx5_16,mlx5_17,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_8,mlx5_9
+      image: ghcr.io/llm-d/llm-d-cuda:v0.3.1
+      livenessProbe:
+        failureThreshold: 3
+        httpGet:
+          path: /health
+          port: 8000
+          scheme: HTTPS
+        initialDelaySeconds: 4800
+        periodSeconds: 10
+        timeoutSeconds: 10
+      name: main
+      resources:
+        limits:
+          cpu: 128
+          ephemeral-storage: 800Gi
+          memory: 512Gi
+          nvidia.com/gpu: "8"
+          rdma/roce_gdr: "2"
+        requests:
+          cpu: 64
+          ephemeral-storage: 800Gi
+          memory: 256Gi
+          nvidia.com/gpu: "8"
+          rdma/roce_gdr: "2"
+    serviceAccountName: hfsa
+status:
+  addresses:
+  - url: http://openshift-ai-inference-istio.openshift-ingress.svc.cluster.local/llm-test/qwen3-30b-a3b-ll
+  conditions:
+  - lastTransitionTime: "2025-11-12T14:50:43Z"
+    severity: Info
+    status: "True"
+    type: HTTPRoutesReady
+  - lastTransitionTime: "2025-11-03T16:10:33Z"
+    severity: Info
+    status: "True"
+    type: InferencePoolReady
+  - lastTransitionTime: "2025-11-14T15:25:42Z"
+    severity: Info
+    status: "True"
+    type: MainWorkloadReady
+  - lastTransitionTime: "2025-10-31T16:57:44Z"
+    severity: Info
+    status: "True"
+    type: PresetsCombined
+  - lastTransitionTime: "2025-11-14T15:25:42Z"
+    status: "True"
+    type: Ready
+  - lastTransitionTime: "2025-11-14T10:56:38Z"
+    status: "True"
+    type: RouterReady
+  - lastTransitionTime: "2025-11-14T10:56:38Z"
+    severity: Info
+    status: "True"
+    type: SchedulerWorkloadReady
+  - lastTransitionTime: "2025-11-14T15:25:42Z"
+    status: "True"
+    type: WorkloadsReady
+  observedGeneration: 50

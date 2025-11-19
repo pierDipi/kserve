@@ -343,19 +343,20 @@ func schedulerConfigText(llmSvc *v1alpha1.LLMInferenceService) string {
 apiVersion: inference.networking.x-k8s.io/v1alpha1
 kind: EndpointPickerConfig
 plugins:
-  - type: prefill-header-handler
-  - type: prefill-filter
-  - type: decode-filter
-  - type: max-score-picker
-  - type: prefix-cache-scorer
-  - type: queue-scorer
   - type: pd-profile-handler
     parameters:
       threshold: 0
+  - type: prefill-header-handler
+  - type: prefill-filter
+  - type: decode-filter
+  - type: queue-scorer
+  - type: kv-cache-utilization-scorer
+  - type: prefix-cache-scorer
 schedulingProfiles:
   - name: prefill
     plugins:
       - pluginRef: prefill-filter
+<<<<<<< Updated upstream
       - pluginRef: queue-scorer
         weight: 1.0
       - pluginRef: max-score-picker
@@ -365,24 +366,41 @@ schedulingProfiles:
       - pluginRef: queue-scorer
         weight: 1.0
       - pluginRef: max-score-picker
+=======
+	  - pluginRef: queue-scorer
+		weight: 2
+	  - pluginRef: kv-cache-utilization-scorer
+		weight: 2
+	  - pluginRef: prefix-cache-scorer
+		weight: 3
+  - name: decode
+    plugins:
+      - pluginRef: decode-filter
+	  - pluginRef: queue-scorer
+		weight: 2
+	  - pluginRef: kv-cache-utilization-scorer
+		weight: 2
+	  - pluginRef: prefix-cache-scorer
+		weight: 3
+>>>>>>> Stashed changes
 `
 	default:
 		return `
 apiVersion: inference.networking.x-k8s.io/v1alpha1
 kind: EndpointPickerConfig
 plugins:
-- type: single-profile-handler
+- type: queue-scorer
+- type: kv-cache-utilization-scorer
 - type: prefix-cache-scorer
-- type: load-aware-scorer
-- type: max-score-picker
 schedulingProfiles:
 - name: default
   plugins:
+  - pluginRef: queue-scorer
+    weight: 2
+  - pluginRef: kv-cache-utilization-scorer
+    weight: 2
   - pluginRef: prefix-cache-scorer
-    weight: 2.0
-  - pluginRef: load-aware-scorer
-    weight: 1.0
-  - pluginRef: max-score-picker
+    weight: 3
 `
 	}
 }
