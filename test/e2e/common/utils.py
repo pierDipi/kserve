@@ -20,6 +20,7 @@ from typing import Union, List, Dict
 from urllib.parse import urlparse
 from timeout_sampler import TimeoutSampler
 
+import httpx
 import portforward
 from kubernetes import client as k8s_client
 from kubernetes.client.rest import ApiException
@@ -137,14 +138,34 @@ async def _predict(
 ) -> Union[InferResponse, Dict]:
     logger.info("Sending Header = %s", headers)
     logger.info("base url = %s", url)
-    response = await client.infer(
-        url,
-        input_data,
-        model_name=model_name,
-        headers=headers,
-        is_graph_endpoint=is_graph,
-    )
-    return response
+
+    # Retry logic to handle transient 503 errors from OpenShift Route endpoint propagation
+    # See: https://github.com/opendatahub-io/kserve/issues/xxx (flaky test due to route timing)
+    max_retries = 8
+    backoff_factor = 2.0
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = await client.infer(
+                url,
+                input_data,
+                model_name=model_name,
+                headers=headers,
+                is_graph_endpoint=is_graph,
+            )
+            return response
+        except httpx.HTTPStatusError as e:
+            # Retry only on 503 Service Unavailable errors
+            if e.response.status_code == 503 and attempt < max_retries:
+                wait_time = backoff_factor**attempt
+                logger.warning(
+                    f"Received 503 error (attempt {attempt + 1}/{max_retries + 1}). "
+                    f"Retrying in {wait_time:.1f}s..."
+                )
+                await asyncio.sleep(wait_time)
+            else:
+                # Re-raise on final attempt or non-503 errors
+                raise
 
 
 async def predict_ig(
@@ -532,6 +553,7 @@ def wait_for_resource_deletion(
         TimeoutExpiredError: If the resource is not deleted within wait_timeout seconds
         ApiException: If there's an API error other than 404 (resource not found)
     """
+
     def _check_deleted():
         try:
             read_func()
