@@ -56,6 +56,7 @@ import (
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	"github.com/kserve/kserve/pkg/controller/v1alpha2/llmisvc"
 	kservescheme "github.com/kserve/kserve/pkg/scheme"
+	"github.com/kserve/kserve/pkg/tlsconfig"
 )
 
 var (
@@ -134,6 +135,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Fetch the cluster-wide TLS security profile (no-op on non-OpenShift clusters)
+	cl, err := client.New(cfg, client.Options{Scheme: kservescheme.NewTLSProfileScheme()})
+	if err != nil {
+		setupLog.Error(err, "unable to create client for TLS profile fetch")
+		os.Exit(1)
+	}
+
+	var tlsOpts []func(*tls.Config)
+	if profileOpts, tlsErr := tlsconfig.FetchTLSOpts(ctx, cl); tlsErr != nil {
+		setupLog.Error(tlsErr, "unable to fetch cluster TLS profile, using defaults")
+	} else {
+		tlsOpts = append(tlsOpts, profileOpts...)
+	}
+
 	// http/2 should be disabled due to its vulnerabilities. More specifically, disabling http/2 will
 	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
 	// Rapid Reset CVEs. For more information see:
@@ -144,7 +159,6 @@ func main() {
 		c.NextProtos = []string{"http/1.1"}
 	}
 
-	var tlsOpts []func(*tls.Config)
 	if !options.enableHTTP2 {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
@@ -318,6 +332,9 @@ func main() {
 		setupLog.Error(err, "unable to register storage version migration")
 		os.Exit(1)
 	}
+
+	// Watch for TLS profile changes and exit to restart with the new profile
+	go tlsconfig.WatchAndExitOnTLSProfileChange(ctrl.LoggerInto(ctx, setupLog), cfg)
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctx); err != nil {
