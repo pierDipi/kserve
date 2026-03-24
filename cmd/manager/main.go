@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"net/http"
 	"os"
@@ -29,6 +30,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -47,6 +49,7 @@ import (
 	"github.com/kserve/kserve/pkg/controller/v1alpha1/trainedmodel/reconcilers/modelconfig"
 	v1beta1controller "github.com/kserve/kserve/pkg/controller/v1beta1/inferenceservice"
 	kservescheme "github.com/kserve/kserve/pkg/scheme"
+	"github.com/kserve/kserve/pkg/tlsconfig"
 	"github.com/kserve/kserve/pkg/webhook/admission/pod"
 	"github.com/kserve/kserve/pkg/webhook/admission/servingruntime"
 )
@@ -116,6 +119,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Fetch the cluster-wide TLS security profile (no-op on non-OpenShift clusters)
+	ctx := context.Background()
+	cl, err := client.New(cfg, client.Options{Scheme: kservescheme.NewTLSProfileScheme()})
+	if err != nil {
+		setupLog.Error(err, "unable to create client for TLS profile fetch")
+		os.Exit(1)
+	}
+
+	var tlsOpts []func(*tls.Config)
+	if profileOpts, tlsErr := tlsconfig.FetchTLSOpts(ctx, cl); tlsErr != nil {
+		setupLog.Error(tlsErr, "unable to fetch cluster TLS profile, using defaults")
+	} else {
+		tlsOpts = append(tlsOpts, profileOpts...)
+	}
+
 	// Create a new Cmd to provide shared dependencies and start components
 	setupLog.Info("Setting up manager")
 
@@ -128,9 +146,11 @@ func main() {
 	mgr, err := manager.New(cfg, manager.Options{
 		Metrics: metricsserver.Options{
 			BindAddress: options.metricsAddr,
+			TLSOpts:     tlsOpts,
 		},
 		WebhookServer: webhook.NewServer(webhook.Options{
-			Port: options.webhookPort,
+			Port:    options.webhookPort,
+			TLSOpts: tlsOpts,
 		}),
 		LeaderElection:         options.enableLeaderElection,
 		LeaderElectionID:       LeaderLockName,
@@ -278,6 +298,9 @@ func main() {
 		setupLog.Error(err, "Unable to set up ready check")
 		os.Exit(1)
 	}
+
+	// Watch for TLS profile changes and exit to restart with the new profile
+	go tlsconfig.WatchAndExitOnTLSProfileChange(ctrl.LoggerInto(ctx, setupLog), cfg)
 
 	// Start the Cmd
 	setupLog.Info("Starting the Cmd.")
