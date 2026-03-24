@@ -43,11 +43,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	"github.com/kserve/kserve/pkg/constants"
+	kservescheme "github.com/kserve/kserve/pkg/scheme"
+	"github.com/kserve/kserve/pkg/tlsconfig"
 )
 
 // _isInMesh is an auxiliary global variable for isInIstioMesh function.
@@ -676,6 +679,28 @@ func main() {
 		ReadTimeout:  time.Duration(*routerTimeouts.ServerRead) * time.Second,  // set the maximum duration for reading the entire request, including the body
 		WriteTimeout: time.Duration(*routerTimeouts.ServerWrite) * time.Second, // set the maximum duration before timing out writes of the response
 		IdleTimeout:  time.Duration(*routerTimeouts.ServerIdle) * time.Second,  // set the maximum amount of time to wait for the next request when keep-alives are enabled
+	}
+
+	// Apply the cluster-wide TLS security profile when TLS is enabled
+	if *enableTlsFlag {
+		ctx := context.Background()
+		restConfig, restErr := rest.InClusterConfig()
+		if restErr != nil {
+			log.Error(restErr, "Failed to create in-cluster config for TLS profile fetch")
+		} else {
+			cl, clErr := client.New(restConfig, client.Options{Scheme: kservescheme.NewTLSProfileScheme()})
+			if clErr != nil {
+				log.Error(clErr, "Failed to create client for TLS profile fetch")
+			} else {
+				tlsCfg, tlsErr := tlsconfig.FetchTLSConfig(ctx, cl)
+				if tlsErr != nil {
+					log.Error(tlsErr, "Failed to fetch cluster TLS profile, using defaults")
+				} else if tlsCfg != nil {
+					server.TLSConfig = tlsCfg
+				}
+			}
+			go tlsconfig.WatchAndExitOnTLSProfileChange(ctx, restConfig)
+		}
 	}
 
 	go func() {
