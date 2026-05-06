@@ -57,8 +57,19 @@ const (
 // reconcileSelfSignedCertsSecret reconciles the secret containing self-signed certs used by the server to serve TLS.
 // These self-signed certs are used for cluster internal communication encryption by the workload and the scheduler.
 // The certificates are automatically renewed before expiration to ensure continuous secure communication.
-func (r *LLMISVCReconciler) reconcileSelfSignedCertsSecret(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService, schedulerConfig *SchedulerConfig) error {
+func (r *LLMISVCReconciler) reconcileSelfSignedCertsSecret(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService, config *Config) error {
 	log.FromContext(ctx).Info("Reconciling self-signed certificates secret")
+
+	if !config.EnableTLS || utils.GetForceStopRuntime(llmSvc) {
+		return Delete(ctx, r, llmSvc, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      kmeta.ChildName(llmSvc.GetName(), "-kserve-self-signed-certs"),
+				Namespace: llmSvc.GetNamespace(),
+			},
+		})
+	}
+
+	schedulerConfig := config.SchedulerConfig
 
 	ips, err := r.collectIPAddresses(ctx, llmSvc)
 	if err != nil {
@@ -78,10 +89,6 @@ func (r *LLMISVCReconciler) reconcileSelfSignedCertsSecret(ctx context.Context, 
 	expected, err := r.expectedSelfSignedCertsSecret(llmSvc, certFunc, schedulerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to get expected self-signed certificate secret: %w", err)
-	}
-
-	if utils.GetForceStopRuntime(llmSvc) {
-		return Delete(ctx, r, llmSvc, expected)
 	}
 
 	if err := Reconcile(ctx, r, llmSvc, &corev1.Secret{}, expected, NewSemanticCertificateSecretIsEqual(schedulerConfig.ExpirationAnnotations)); err != nil {
