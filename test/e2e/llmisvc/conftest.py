@@ -15,6 +15,10 @@
 # Fixture factory - not called explicitly, but must be imported for pytest to discover it.
 from .fixtures import test_case  # noqa: F401
 
+import pytest
+
+_LLMD_SIMULATOR_WORKLOADS = ("workload-llmd-simulator",)
+
 
 # This hook is used to ensure that the test names are unique and to ensure that
 # the test names are consistent with the cluster marks.
@@ -29,6 +33,11 @@ def pytest_collection_modifyitems(config, items):
             continue
         base, rest = item.nodeid.split("[", 1)
         rest = rest.rstrip("]")
+
+        # Auto-apply llmd_simulator marker to tests whose parametrize ID
+        # references a simulator workload (they have hardcoded TLS args).
+        if any(w in rest for w in _LLMD_SIMULATOR_WORKLOADS):
+            item.add_marker(pytest.mark.llmd_simulator)
 
         cluster_marks = [
             m.name for m in item.iter_markers() if m.name.startswith("cluster_")
@@ -50,4 +59,8 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers", "autoscaling_keda: mark test as a KEDA autoscaling test"
+    )
+    config.addinivalue_line(
+        "markers",
+        "llmd_simulator: mark test as using the llm-d simulator with hardcoded TLS args",
     )
