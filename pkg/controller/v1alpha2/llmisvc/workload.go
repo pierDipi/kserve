@@ -95,7 +95,7 @@ func (r *LLMISVCReconciler) reconcileWorkload(ctx context.Context, llmSvc *v1alp
 	}
 
 	// Create Service to expose workload pods
-	if err := r.reconcileWorkloadService(ctx, llmSvc); err != nil {
+	if err := r.reconcileWorkloadService(ctx, llmSvc, config.EnableTLS); err != nil {
 		llmSvc.MarkMainWorkloadNotReady("ReconcileWorkloadServiceError", err.Error())
 		return fmt.Errorf("failed to reconcile workload service: %w", err)
 	}
@@ -116,7 +116,13 @@ func (r *LLMISVCReconciler) reconcileWorkload(ctx context.Context, llmSvc *v1alp
 	return nil
 }
 
-func (r *LLMISVCReconciler) reconcileWorkloadService(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService) error {
+func (r *LLMISVCReconciler) reconcileWorkloadService(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService, enableTLS bool) error {
+	portName := "http"
+	appProtocol := "http"
+	if enableTLS {
+		portName = "https"
+		appProtocol = "https"
+	}
 	expected := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kmeta.ChildName(llmSvc.GetName(), "-kserve-workload-svc"),
@@ -141,9 +147,9 @@ func (r *LLMISVCReconciler) reconcileWorkloadService(ctx context.Context, llmSvc
 			// "main receiver" port.
 			Ports: []corev1.ServicePort{
 				{
-					Name:        "https",
+					Name:        portName,
 					Protocol:    corev1.ProtocolTCP,
-					AppProtocol: ptr.To("https"),
+					AppProtocol: ptr.To(appProtocol),
 					Port:        8000,
 					TargetPort: intstr.IntOrString{
 						Type:   intstr.Int,
