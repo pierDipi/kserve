@@ -28,6 +28,7 @@ from .diagnostic import (
     kinds_matching_by_labels,
 )
 from .fixtures import (
+    create_pvc_with_hf_cache,
     create_router_resources,
     create_scheduler_configmap,
     delete_scheduler_configmap,
@@ -158,6 +159,24 @@ def chat_completions_payload(test_case: TestCase) -> Dict[str, Any]:
                 prompt="KServe is a",
                 payload_formatter=completions_payload,
                 response_assertion=assert_200_with_choices,
+            ),
+            marks=[pytest.mark.cluster_cpu, pytest.mark.cluster_single_node],
+        ),
+        # PVC with HF cache: the controller injects MODEL_URI, HF_HOME, and
+        # HF_HUB_OFFLINE so vLLM resolves the model from the pre-populated
+        # cache on the PVC. The PVC is a shared resource (not deleted in
+        # after_test) so multiple tests can reference it in parallel.
+        pytest.param(
+            TestCase(
+                base_refs=[
+                    "router-managed",
+                    "workload-single-cpu",
+                    "model-fb-opt-125m-pvc",
+                ],
+                prompt="KServe is a",
+                payload_formatter=completions_payload,
+                response_assertion=assert_200_with_choices,
+                before_test=[create_pvc_with_hf_cache],
             ),
             marks=[pytest.mark.cluster_cpu, pytest.mark.cluster_single_node],
         ),

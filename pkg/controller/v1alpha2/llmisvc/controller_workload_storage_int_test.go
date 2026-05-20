@@ -121,6 +121,63 @@ var _ = Describe("LLMInferenceService Controller - Storage configuration", func(
 			validatePvcStorageIsConfigured(expectedPrefillDeployment)
 		})
 
+		It("should configure direct PVC mount and set MODEL_URI env var when model uri has model query parameter", func(ctx SpecContext) {
+			// given
+			svcName := "test-llm-storage-pvc-model"
+			testNs := NewTestNamespace(ctx, envTest, WithIstioShadowService(svcName))
+
+			modelURL, err := apis.ParseURL("pvc://facebook-models/opt-125m?model=facebook/opt-125m")
+			Expect(err).ToNot(HaveOccurred())
+
+			llmSvc := &v1alpha2.LLMInferenceService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      svcName,
+					Namespace: testNs.Name,
+				},
+				Spec: v1alpha2.LLMInferenceServiceSpec{
+					Model: v1alpha2.LLMModelSpec{
+						Name: ptr.To("foo"),
+						URI:  *modelURL,
+					},
+					WorkloadSpec: v1alpha2.WorkloadSpec{},
+					Router: &v1alpha2.RouterSpec{
+						Route:     &v1alpha2.GatewayRoutesSpec{},
+						Gateway:   &v1alpha2.GatewaySpec{},
+						Scheduler: &v1alpha2.SchedulerSpec{},
+					},
+					Prefill: &v1alpha2.WorkloadSpec{},
+				},
+			}
+
+			// when
+			Expect(envTest.Create(ctx, llmSvc)).To(Succeed())
+			defer func() {
+				testNs.DeleteAndWait(ctx, llmSvc)
+			}()
+
+			// then
+			expectedMainDeployment := &appsv1.Deployment{}
+			Eventually(func(g Gomega, ctx context.Context) error {
+				return envTest.Get(ctx, types.NamespacedName{
+					Name:      svcName + "-kserve",
+					Namespace: testNs.Name,
+				}, expectedMainDeployment)
+			}).WithContext(ctx).Should(Succeed())
+
+			expectedPrefillDeployment := &appsv1.Deployment{}
+			Eventually(func(g Gomega, ctx context.Context) error {
+				return envTest.Get(ctx, types.NamespacedName{
+					Name:      svcName + "-kserve-prefill",
+					Namespace: testNs.Name,
+				}, expectedPrefillDeployment)
+			}).WithContext(ctx).Should(Succeed())
+
+			validatePvcStorageIsConfigured(expectedMainDeployment)
+			validatePvcStorageIsConfigured(expectedPrefillDeployment)
+			validateHfCacheEnvVars(expectedMainDeployment, "facebook/opt-125m")
+			validateHfCacheEnvVars(expectedPrefillDeployment, "facebook/opt-125m")
+		})
+
 		It("should configure a modelcar when model uri starts with oci://", func(ctx SpecContext) {
 			// given
 			svcName := "test-llm-storage-oci"
@@ -1347,6 +1404,75 @@ var _ = Describe("LLMInferenceService Controller - Storage configuration", func(
 			validatePvcStorageIsConfiguredForLWS(expectedPrefillLWS)
 		})
 
+		It("should configure direct PVC mount and set MODEL_URI env var when model uri has model query parameter", func(ctx SpecContext) {
+			// given
+			svcName := "test-llm-storage-pvc-model-mn"
+			testNs := NewTestNamespace(ctx, envTest, WithIstioShadowService(svcName))
+
+			modelURL, err := apis.ParseURL("pvc://facebook-models/opt-125m?model=facebook/opt-125m")
+			Expect(err).ToNot(HaveOccurred())
+
+			llmSvc := &v1alpha2.LLMInferenceService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      svcName,
+					Namespace: testNs.Name,
+				},
+				Spec: v1alpha2.LLMInferenceServiceSpec{
+					Model: v1alpha2.LLMModelSpec{
+						Name: ptr.To("foo"),
+						URI:  *modelURL,
+					},
+					WorkloadSpec: v1alpha2.WorkloadSpec{
+						Worker: &corev1.PodSpec{Containers: []corev1.Container{}},
+						Parallelism: &v1alpha2.ParallelismSpec{
+							Data:      ptr.To[int32](1),
+							DataLocal: ptr.To[int32](1),
+						},
+					},
+					Router: &v1alpha2.RouterSpec{
+						Route:     &v1alpha2.GatewayRoutesSpec{},
+						Gateway:   &v1alpha2.GatewaySpec{},
+						Scheduler: &v1alpha2.SchedulerSpec{},
+					},
+					Prefill: &v1alpha2.WorkloadSpec{
+						Worker: &corev1.PodSpec{Containers: []corev1.Container{}},
+						Parallelism: &v1alpha2.ParallelismSpec{
+							Data:      ptr.To[int32](1),
+							DataLocal: ptr.To[int32](1),
+						},
+					},
+				},
+			}
+
+			// when
+			Expect(envTest.Create(ctx, llmSvc)).To(Succeed())
+			defer func() {
+				testNs.DeleteAndWait(ctx, llmSvc)
+			}()
+
+			// then
+			expectedMainLWS := &lwsapi.LeaderWorkerSet{}
+			Eventually(func(g Gomega, ctx context.Context) error {
+				return envTest.Get(ctx, types.NamespacedName{
+					Name:      svcName + "-kserve-mn",
+					Namespace: testNs.Name,
+				}, expectedMainLWS)
+			}).WithContext(ctx).Should(Succeed())
+
+			expectedPrefillLWS := &lwsapi.LeaderWorkerSet{}
+			Eventually(func(g Gomega, ctx context.Context) error {
+				return envTest.Get(ctx, types.NamespacedName{
+					Name:      svcName + "-kserve-mn-prefill",
+					Namespace: testNs.Name,
+				}, expectedPrefillLWS)
+			}).WithContext(ctx).Should(Succeed())
+
+			validatePvcStorageIsConfiguredForLWS(expectedMainLWS)
+			validatePvcStorageIsConfiguredForLWS(expectedPrefillLWS)
+			validateHfCacheEnvVarsForLWS(expectedMainLWS, "facebook/opt-125m")
+			validateHfCacheEnvVarsForLWS(expectedPrefillLWS, "facebook/opt-125m")
+		})
+
 		It("should configure a modelcar when model uri starts with oci://", func(ctx SpecContext) {
 			// given
 			svcName := "test-llm-storage-oci-mn"
@@ -2311,6 +2437,29 @@ var _ = Describe("LLMInferenceService Controller - Storage configuration", func(
 
 func validatePvcStorageIsConfigured(deployment *appsv1.Deployment) {
 	validatePvcStorageForPodSpec(&deployment.Spec.Template.Spec)
+}
+
+// validateHfCacheEnvVars checks that the HF cache env vars (MODEL_URI, HF_HOME,
+// HF_HUB_OFFLINE) are set on the main container of a Deployment. These vars are
+// injected when a PVC URI carries the ?model= query parameter so vLLM can
+// resolve the model from a pre-populated HuggingFace Hub cache on the PVC.
+func validateHfCacheEnvVars(deployment *appsv1.Deployment, expectedModelURI string) {
+	validateHfCacheEnvVarsForPodSpec(&deployment.Spec.Template.Spec, expectedModelURI)
+}
+
+func validateHfCacheEnvVarsForLWS(lws *lwsapi.LeaderWorkerSet, expectedModelURI string) {
+	workerSpec := lws.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec
+	validateHfCacheEnvVarsForPodSpec(&workerSpec, expectedModelURI)
+}
+
+func validateHfCacheEnvVarsForPodSpec(podSpec *corev1.PodSpec, expectedModelURI string) {
+	mainContainer := utils.GetContainerWithName(podSpec, "main")
+	Expect(mainContainer).ToNot(BeNil())
+	Expect(mainContainer.Env).To(ContainElements(
+		And(HaveField("Name", "MODEL_URI"), HaveField("Value", expectedModelURI)),
+		And(HaveField("Name", "HF_HOME"), HaveField("Value", constants.DefaultModelLocalMountPath)),
+		And(HaveField("Name", "HF_HUB_OFFLINE"), HaveField("Value", "1")),
+	))
 }
 
 func validateOciStorageIsConfigured(deployment *appsv1.Deployment) {

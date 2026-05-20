@@ -20,12 +20,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"knative.dev/pkg/apis"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -209,21 +211,16 @@ func (r *LLMISVCReconciler) attachOciModelArtifact(modelUri string, podSpec *cor
 	return nil
 }
 
-// attachPVCModelArtifact mounts a model artifact from a PersistentVolumeClaim (PVC) to the specified PodSpec.
-// It adds the PVC as a volume and mounts it to the `main` container. The mount path is added to the arguments of the
-// `main` container, assuming the model server expects a positional argument indicating the location of the model (which is the case of vLLM)
+// attachPVCModelArtifact mounts a model from a PVC into the specified container.
 //
-// Parameters:
-//   - modelUri: The URI of the model, expected to have a PVC prefix.
-//   - podSpec: The PodSpec to which the PVC volume and mount should be attached.
+// The expected URI format is "pvc://<pvc-name>[/<sub-path>][?model=<model-name>]".
+// When the optional "model" query parameter is present, MODEL_URI and HF_HOME
+// environment variables are set on the container so the model server can resolve
+// the model by its HuggingFace ID from the cache structure on the PVC.
 //
-// Returns:
-//
-//	An error if attaching the PVC model artifact fails, otherwise nil.
-//
-// TODO: For now, this supports only direct mount. Copying from PVC would come later (if it makes sense at all).
+// TODO: only direct mount is supported; copy-from-PVC may come later.
 func (r *LLMISVCReconciler) attachPVCModelArtifact(modelUri string, podSpec *corev1.PodSpec, containerName string, modelPath string) error {
-	pvcName, pvcPath, err := utils.ParsePvcURI(modelUri)
+	uri, err := parsePvcURI(modelUri)
 	if err != nil {
 		return err
 	}
@@ -232,15 +229,56 @@ func (r *LLMISVCReconciler) attachPVCModelArtifact(modelUri string, podSpec *cor
 		MountPath:  modelPath,
 		VolumeName: constants.PvcSourceMountName,
 		ReadOnly:   true,
-		PVCName:    pvcName,
-		SubPath:    pvcPath,
+		PVCName:    uri.Hostname(),
+		// url.Parse returns Path with a leading "/", but Kubernetes
+		// requires SubPath to be relative.
+		SubPath: strings.TrimPrefix(uri.Path, "/"),
 	}
 
 	if err := utils.AddModelMount(storageMountParams, containerName, podSpec); err != nil {
 		return err
 	}
 
+	// When the "model" query parameter is present, the PVC is expected to hold
+	// a HuggingFace Hub cache directory structure. Configure the container so
+	// vLLM can resolve the model by its HF ID from the local cache:
+	//  - MODEL_URI overrides the default /mnt/models path in the vllm serve command.
+	//  - HF_HOME tells huggingface_hub where the cache root is.
+	//  - HF_HUB_OFFLINE=1 prevents any HTTP calls to the Hub, since all
+	//    files are already present on the PVC.
+	modelName := uri.Query().Get("model")
+	if modelName != "" {
+		if c := utils.GetContainerWithName(podSpec, containerName); c != nil {
+			utils.AddEnvVars(c, []corev1.EnvVar{
+				{
+					Name:  "MODEL_URI",
+					Value: modelName,
+				},
+				{
+					Name:  "HF_HOME",
+					Value: modelPath,
+				},
+				{
+					Name:  "HF_HUB_OFFLINE",
+					Value: "1",
+				},
+			})
+		}
+	}
+
 	return nil
+}
+
+// parsePvcURI parses srcURI as a standard URL.
+//
+// The caller is responsible for extracting the relevant components (Hostname,
+// Path, Query) from the returned [url.URL].
+func parsePvcURI(srcURI string) (*url.URL, error) {
+	uri, err := apis.ParseURL(srcURI)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse PVC URI: %w", err)
+	}
+	return uri.URL(), nil
 }
 
 // attachS3ModelArtifact configures a PodSpec to use a model stored in an S3-compatible object store.

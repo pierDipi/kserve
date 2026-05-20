@@ -34,6 +34,14 @@ KSERVE_TEST_NAMESPACE = "kserve-ci-e2e-test"
 SCHEDULER_CONFIGMAP_NAME = "scheduler-config-e2e"
 SCHEDULER_CONFIGMAP_KEY = "epp"
 
+# PVC storage constants
+PVC_MODEL_NAME = "llm-e2e-pvc-opt-125m"
+PVC_INIT_JOB_NAME = "e2e-pvc-hf-cache-init"
+PVC_HF_DOWNLOAD_IMAGE = os.environ.get(
+    "HF_DOWNLOAD_IMAGE", "docker.io/python:3.11-slim"
+)
+PVC_STORAGE_CLASS_NAME = os.environ.get("PVC_STORAGE_CLASS_NAME", None)
+
 # Vanilla Kubernetes rejects runAsNonRoot-only containers when the image does not declare a USER.
 # Keep the templates OpenShift-safe and use an explicit non-root UID only in upstream CI test overrides.
 UPSTREAM_K8S_NON_ROOT_SECURITY_CONTEXT = {
@@ -151,6 +159,12 @@ LLMINFERENCESERVICE_CONFIGS = {
         "model": {
             "uri": "hf://Qwen/Qwen2.5-0.5B-Instruct",
             "name": "Qwen/Qwen2.5-0.5B-Instruct",
+        },
+    },
+    "model-fb-opt-125m-pvc": {
+        "model": {
+            "uri": f"pvc://{PVC_MODEL_NAME}?model=facebook/opt-125m",
+            "name": "facebook/opt-125m",
         },
     },
     "model-deepseek-v2-lite": {
@@ -1510,3 +1524,160 @@ def delete_scheduler_configmap():
     except client.rest.ApiException as e:
         if e.status != 404:  # Ignore not found
             raise
+
+
+def create_pvc_with_hf_cache():
+    """Create a PVC and a Job that populates it with a HuggingFace Hub cache.
+
+    The Job runs ``huggingface-cli download`` so the PVC ends up with the
+    standard HF cache directory layout (models--org--name/blobs/snapshots/refs/).
+    This is required for testing the ``pvc://<name>?model=<id>`` feature, where
+    vLLM resolves the model from HF_HOME on the PVC.
+
+    This resource is shared across tests and is NOT deleted in after_test hooks
+    (same pattern as create_router_resources). Multiple tests calling this
+    function concurrently are safe: PVC and Job creation are idempotent, and
+    concurrent callers simply wait for the same Job to complete.
+    """
+    inject_k8s_proxy()
+    batch_v1 = client.BatchV1Api()
+
+    # If the download Job already succeeded, the PVC is ready.
+    if _is_pvc_init_job_completed(batch_v1):
+        logger.info(f"Job {PVC_INIT_JOB_NAME} already succeeded, PVC is ready")
+        return
+
+    _create_pvc(client.CoreV1Api())
+    _create_pvc_init_job(batch_v1)
+    _wait_for_pvc_init_job(batch_v1)
+
+
+def _is_pvc_init_job_completed(batch_v1):
+    """Return True if the PVC init Job has already succeeded."""
+    try:
+        job_status = batch_v1.read_namespaced_job_status(
+            name=PVC_INIT_JOB_NAME, namespace=KSERVE_TEST_NAMESPACE
+        )
+        return job_status.status.succeeded and job_status.status.succeeded >= 1
+    except client.rest.ApiException as e:
+        if e.status == 404:
+            return False
+        raise
+
+
+def _create_pvc(core_v1):
+    pvc = client.V1PersistentVolumeClaim(
+        api_version="v1",
+        kind="PersistentVolumeClaim",
+        metadata=client.V1ObjectMeta(
+            name=PVC_MODEL_NAME,
+            namespace=KSERVE_TEST_NAMESPACE,
+        ),
+        # RWO is safe for parallel tests on single-node clusters (KinD, Minikube)
+        # because multiple pods on the same node can mount the same RWO PVC.
+        # Multi-node clusters would need RWX, but local-path provisioners
+        # (KinD, Minikube) only support RWO.
+        spec=client.V1PersistentVolumeClaimSpec(
+            access_modes=["ReadWriteOnce"],
+            storage_class_name=PVC_STORAGE_CLASS_NAME,
+            resources=client.V1VolumeResourceRequirements(
+                requests={"storage": "5Gi"},
+            ),
+        ),
+    )
+
+    try:
+        core_v1.create_namespaced_persistent_volume_claim(
+            namespace=KSERVE_TEST_NAMESPACE, body=pvc
+        )
+        logger.info(f"Created PVC {PVC_MODEL_NAME}")
+    except client.rest.ApiException as e:
+        if e.status == 409:
+            logger.info(f"PVC {PVC_MODEL_NAME} already exists")
+        else:
+            raise
+
+
+def _create_pvc_init_job(batch_v1):
+    job = client.V1Job(
+        api_version="batch/v1",
+        kind="Job",
+        metadata=client.V1ObjectMeta(
+            name=PVC_INIT_JOB_NAME,
+            namespace=KSERVE_TEST_NAMESPACE,
+        ),
+        spec=client.V1JobSpec(
+            completions=1,
+            parallelism=1,
+            backoff_limit=2,
+            template=client.V1PodTemplateSpec(
+                spec=client.V1PodSpec(
+                    restart_policy="Never",
+                    volumes=[
+                        client.V1Volume(
+                            name="model-cache",
+                            persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                                claim_name=PVC_MODEL_NAME,
+                                read_only=False,
+                            ),
+                        ),
+                    ],
+                    containers=[
+                        client.V1Container(
+                            name="download",
+                            image=PVC_HF_DOWNLOAD_IMAGE,
+                            command=["sh", "-c"],
+                            # Download facebook/opt-125m into the HF cache
+                            # layout under /mnt/models/hub so vLLM can
+                            # resolve it via HF_HOME=/mnt/models.
+                            args=[
+                                "pip install --quiet huggingface_hub && "
+                                "huggingface-cli download facebook/opt-125m "
+                                "--cache-dir /mnt/models/hub"
+                            ],
+                            volume_mounts=[
+                                client.V1VolumeMount(
+                                    name="model-cache",
+                                    mount_path="/mnt/models",
+                                ),
+                            ],
+                            resources=client.V1ResourceRequirements(
+                                requests={"cpu": "500m", "memory": "1Gi"},
+                                limits={"cpu": "1", "memory": "2Gi"},
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ),
+    )
+
+    try:
+        batch_v1.create_namespaced_job(namespace=KSERVE_TEST_NAMESPACE, body=job)
+        logger.info(f"Created Job {PVC_INIT_JOB_NAME}")
+    except client.rest.ApiException as e:
+        if e.status == 409:
+            logger.info(f"Job {PVC_INIT_JOB_NAME} already exists")
+        else:
+            raise
+
+
+def _wait_for_pvc_init_job(batch_v1, timeout=600):
+    import time
+
+    start = time.time()
+    while time.time() - start < timeout:
+        job_status = batch_v1.read_namespaced_job_status(
+            name=PVC_INIT_JOB_NAME, namespace=KSERVE_TEST_NAMESPACE
+        )
+        if job_status.status.succeeded and job_status.status.succeeded >= 1:
+            logger.info(f"Job {PVC_INIT_JOB_NAME} completed successfully")
+            return
+        if job_status.status.failed and job_status.status.failed >= 2:
+            raise RuntimeError(
+                f"Job {PVC_INIT_JOB_NAME} failed after "
+                f"{job_status.status.failed} attempts"
+            )
+        time.sleep(10)
+
+    raise TimeoutError(f"Job {PVC_INIT_JOB_NAME} did not complete within {timeout}s")

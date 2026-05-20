@@ -227,7 +227,7 @@ spec:
             echo "[access-log-detect] selected ACCESS_LOG_ARGS='${ACCESS_LOG_ARGS}'"
 
             eval "vllm serve \
-              /mnt/models \
+              \"${MODEL_URI:-/mnt/models}\" \
               --served-model-name "{{ .Spec.Model.Name }}" \
               --port 8001 \
               --api-server-count ${VLLM_API_SERVER_COUNT:-8} \
@@ -490,7 +490,7 @@ spec:
             echo "[access-log-detect] selected ACCESS_LOG_ARGS='${ACCESS_LOG_ARGS}'"
 
             eval "vllm serve \
-              /mnt/models \
+              \"${MODEL_URI:-/mnt/models}\" \
               --served-model-name "{{ .Spec.Model.Name }}" \
               --port 8001 \
               {{- if .Spec.Parallelism.Expert }}--enable-expert-parallel{{- end }} \
