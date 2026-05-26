@@ -46,11 +46,14 @@ func init() {
 
 func main() {
 	var (
-		listenAddr    string
-		backendTimeout time.Duration
-		failurePolicy string
-		namespace     string
-		kubeconfig    string
+		listenAddr       string
+		backendTimeout   time.Duration
+		failurePolicy    string
+		namespace        string
+		kubeconfig       string
+		gatewayName      string
+		gatewayNamespace string
+		gatewaySection   string
 	)
 
 	flag.StringVar(&listenAddr, "listen-addr", ":8080", "Address to listen on")
@@ -58,6 +61,9 @@ func main() {
 	flag.StringVar(&failurePolicy, "failure-policy", "return-partial", "Partial failure policy: fail-all or return-partial")
 	flag.StringVar(&namespace, "namespace", "", "Limit discovery to a specific namespace")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file")
+	flag.StringVar(&gatewayName, "gateway-name", "", "Gateway name to filter HTTPRoutes by (enables HTTPRoute-based discovery)")
+	flag.StringVar(&gatewayNamespace, "gateway-namespace", "", "Gateway namespace (required when --gateway-name is set)")
+	flag.StringVar(&gatewaySection, "gateway-section", "", "Gateway listener section name (optional)")
 	flag.Parse()
 
 	if kubeconfig != "" {
@@ -79,11 +85,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	var discoveryOpts []aggserver.KubeDiscoveryOption
-	if namespace != "" {
-		discoveryOpts = append(discoveryOpts, aggserver.WithNamespace(namespace))
+	var discovery aggserver.BackendDiscovery
+	if gatewayName != "" {
+		if gatewayNamespace == "" {
+			slog.Error("--gateway-namespace is required when --gateway-name is set")
+			os.Exit(1)
+		}
+		gw := aggserver.GatewayTarget{
+			Name:        gatewayName,
+			Namespace:   gatewayNamespace,
+			SectionName: gatewaySection,
+		}
+		var httpRouteOpts []aggserver.HTTPRouteDiscoveryOption
+		if namespace != "" {
+			httpRouteOpts = append(httpRouteOpts, aggserver.HTTPRouteInNamespace(namespace))
+		}
+		discovery = aggserver.NewHTTPRouteDiscovery(k8sClient, gw, httpRouteOpts...)
+		slog.Info("using HTTPRoute-based discovery", "gateway", gatewayName, "namespace", gatewayNamespace, "section", gatewaySection)
+	} else {
+		var kubeOpts []aggserver.KubeDiscoveryOption
+		if namespace != "" {
+			kubeOpts = append(kubeOpts, aggserver.WithNamespace(namespace))
+		}
+		discovery = aggserver.NewKubernetesDiscovery(k8sClient, kubeOpts...)
+		slog.Info("using direct LLMInferenceService discovery")
 	}
-	discovery := aggserver.NewKubernetesDiscovery(k8sClient, discoveryOpts...)
 
 	policy := aggserver.ReturnPartial
 	if failurePolicy == "fail-all" {
