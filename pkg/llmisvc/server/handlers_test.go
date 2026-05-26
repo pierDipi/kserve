@@ -27,7 +27,10 @@ import (
 func TestModelsHandlerReturnsValidResponse(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"object":"list","data":[{"id":"llama-3","object":"model","created":100,"owned_by":"meta"}]}`))
+		w.Write([]byte(`{"object":"list","data":[
+			{"id":"meta-llama/llama-3","object":"model","created":100,"owned_by":"meta"},
+			{"id":"publishers/default/models/meta-llama/llama-3","object":"model","created":100,"owned_by":"meta"}
+		]}`))
 	}))
 	defer backend.Close()
 
@@ -55,18 +58,92 @@ func TestModelsHandlerReturnsValidResponse(t *testing.T) {
 		t.Fatalf("expected object 'list', got %s", resp.Object)
 	}
 	if len(resp.Data) != 1 {
-		t.Fatalf("expected 1 model, got %d", len(resp.Data))
+		t.Fatalf("expected 1 model (default prefix filter), got %d", len(resp.Data))
 	}
 
 	var m map[string]any
 	if err := json.Unmarshal(resp.Data[0], &m); err != nil {
 		t.Fatalf("failed to unmarshal model: %v", err)
 	}
-	if m["id"] != "llama-3" {
-		t.Fatalf("expected model ID 'llama-3', got %v", m["id"])
+	if m["id"] != "publishers/default/models/meta-llama/llama-3" {
+		t.Fatalf("expected publishers/ model ID, got %v", m["id"])
 	}
 	if m["owned_by"] != "llama-backend/default" {
 		t.Fatalf("expected owned_by 'llama-backend/default', got %v", m["owned_by"])
+	}
+}
+
+func TestModelsHandlerDefaultPrefixFiltering(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"object":"list","data":[
+			{"id":"facebook/opt-125m","object":"model","created":1779787746,"owned_by":"vllm"},
+			{"id":"publishers/default/models/facebook/opt-125m","object":"model","created":1779787746,"owned_by":"vllm"}
+		]}`))
+	}))
+	defer backend.Close()
+
+	u, _ := url.Parse(backend.URL)
+	discovery := NewStaticDiscovery([]Backend{
+		{Name: "opt-svc", Namespace: "default", URL: u, Ready: true},
+	})
+	agg := NewAggregator(discovery)
+
+	handler := ModelsHandler(agg)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var resp ListModelsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("expected 1 model with default publishers/ filter, got %d", len(resp.Data))
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(resp.Data[0], &m); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if m["id"] != "publishers/default/models/facebook/opt-125m" {
+		t.Fatalf("expected publishers/ model, got %v", m["id"])
+	}
+}
+
+func TestModelsHandlerNoFilterIncludesAll(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"object":"list","data":[
+			{"id":"facebook/opt-125m","object":"model"},
+			{"id":"publishers/default/models/facebook/opt-125m","object":"model"}
+		]}`))
+	}))
+	defer backend.Close()
+
+	u, _ := url.Parse(backend.URL)
+	discovery := NewStaticDiscovery([]Backend{
+		{Name: "svc", Namespace: "ns", URL: u, Ready: true},
+	})
+	agg := NewAggregator(discovery)
+
+	handler := ModelsHandler(agg, WithModelIDPrefixes())
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	var resp ListModelsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected 2 models with no prefix filter, got %d", len(resp.Data))
 	}
 }
 

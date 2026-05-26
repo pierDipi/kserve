@@ -23,14 +23,43 @@ import (
 	"net/http"
 )
 
-func ModelsHandler(a *Aggregator) http.Handler {
+// DefaultModelIDPrefixes is the default set of model ID prefixes to include
+// in aggregated /v1/models responses. Models whose ID does not start with
+// one of these prefixes are filtered out.
+var DefaultModelIDPrefixes = []string{"publishers/"}
+
+type ModelsHandlerOption func(*modelsHandlerConfig)
+
+type modelsHandlerConfig struct {
+	modelIDPrefixes []string
+}
+
+// WithModelIDPrefixes sets the model ID prefixes to filter by. Only models
+// whose ID starts with one of the given prefixes will be included. Pass an
+// empty slice to disable filtering and include all models.
+func WithModelIDPrefixes(prefixes ...string) ModelsHandlerOption {
+	return func(c *modelsHandlerConfig) {
+		c.modelIDPrefixes = prefixes
+	}
+}
+
+func ModelsHandler(a *Aggregator, opts ...ModelsHandlerOption) http.Handler {
+	cfg := &modelsHandlerConfig{
+		modelIDPrefixes: DefaultModelIDPrefixes,
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	mergeFn := MergeModelsWithPrefixes(cfg.modelIDPrefixes...)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		result, status, err := a.FanOut(r.Context(), r, "/v1/models", MergeModelsResponses)
+		result, status, err := a.FanOut(r.Context(), r, "/v1/models", mergeFn)
 		if err != nil {
 			slog.Error("fan-out failed for /v1/models", "error", err)
 			http.Error(w, err.Error(), status)

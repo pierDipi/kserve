@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,6 +55,7 @@ func main() {
 		gatewayName      string
 		gatewayNamespace string
 		gatewaySection   string
+		modelIDPrefix    string
 	)
 
 	flag.StringVar(&listenAddr, "listen-addr", ":8080", "Address to listen on")
@@ -64,6 +66,7 @@ func main() {
 	flag.StringVar(&gatewayName, "gateway-name", "", "Gateway name to filter HTTPRoutes by (enables HTTPRoute-based discovery)")
 	flag.StringVar(&gatewayNamespace, "gateway-namespace", "", "Gateway namespace (required when --gateway-name is set)")
 	flag.StringVar(&gatewaySection, "gateway-section", "", "Gateway listener section name (optional)")
+	flag.StringVar(&modelIDPrefix, "model-id-prefix", "publishers/", "Comma-separated model ID prefixes to include in /v1/models (empty string disables filtering)")
 	flag.Parse()
 
 	if kubeconfig != "" {
@@ -121,8 +124,16 @@ func main() {
 		aggserver.WithFailurePolicy(policy),
 	)
 
+	var modelsOpts []aggserver.ModelsHandlerOption
+	if modelIDPrefix != "" {
+		prefixes := strings.Split(modelIDPrefix, ",")
+		modelsOpts = append(modelsOpts, aggserver.WithModelIDPrefixes(prefixes...))
+	} else {
+		modelsOpts = append(modelsOpts, aggserver.WithModelIDPrefixes())
+	}
+
 	mux := http.NewServeMux()
-	mux.Handle("/v1/models", aggserver.ModelsHandler(aggregator))
+	mux.Handle("/v1/models", aggserver.ModelsHandler(aggregator, modelsOpts...))
 	mux.Handle("/health", aggserver.HealthHandler(aggregator))
 	mux.Handle("/metrics", aggserver.MetricsHandler(aggregator))
 	mux.Handle("/load", aggserver.LoadHandler(aggregator))

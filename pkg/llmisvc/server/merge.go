@@ -24,6 +24,16 @@ import (
 )
 
 func MergeModelsResponses(responses []BackendResponse) (any, int, error) {
+	return mergeModels(responses, nil)
+}
+
+func MergeModelsWithPrefixes(prefixes ...string) MergeFunc {
+	return func(responses []BackendResponse) (any, int, error) {
+		return mergeModels(responses, prefixes)
+	}
+}
+
+func mergeModels(responses []BackendResponse, prefixes []string) (any, int, error) {
 	merged := ListModelsResponse{
 		Object: "list",
 		Data:   []json.RawMessage{},
@@ -38,6 +48,9 @@ func MergeModelsResponses(responses []BackendResponse) (any, int, error) {
 			continue
 		}
 		for _, raw := range lr.Data {
+			if len(prefixes) > 0 && !modelIDMatchesPrefixes(raw, prefixes) {
+				continue
+			}
 			patched, err := patchOwnedBy(raw, resp.Backend.Name+"/"+resp.Backend.Namespace)
 			if err != nil {
 				continue
@@ -47,6 +60,21 @@ func MergeModelsResponses(responses []BackendResponse) (any, int, error) {
 	}
 
 	return merged, http.StatusOK, nil
+}
+
+func modelIDMatchesPrefixes(raw json.RawMessage, prefixes []string) bool {
+	var partial struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &partial); err != nil {
+		return false
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(partial.ID, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func patchOwnedBy(raw json.RawMessage, owner string) (json.RawMessage, error) {

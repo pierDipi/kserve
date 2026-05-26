@@ -122,6 +122,84 @@ func TestMergeModelsResponsesPreservesExtraFields(t *testing.T) {
 	}
 }
 
+func TestMergeModelsWithPrefixFiltering(t *testing.T) {
+	vllmResponse := []byte(`{"object":"list","data":[
+		{"id":"facebook/opt-125m","object":"model","created":1779787746,"owned_by":"vllm"},
+		{"id":"publishers/default/models/facebook/opt-125m","object":"model","created":1779787746,"owned_by":"vllm"}
+	]}`)
+
+	responses := []BackendResponse{
+		{Backend: Backend{Name: "opt-svc", Namespace: "default"}, Body: vllmResponse, Status: 200},
+	}
+
+	mergeFn := MergeModelsWithPrefixes("publishers/")
+	result, status, err := mergeFn(responses)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", status)
+	}
+
+	resp := result.(ListModelsResponse)
+	if len(resp.Data) != 1 {
+		t.Fatalf("expected 1 model after prefix filtering, got %d", len(resp.Data))
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(resp.Data[0], &m); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if m["id"] != "publishers/default/models/facebook/opt-125m" {
+		t.Errorf("expected publishers/ model, got %v", m["id"])
+	}
+}
+
+func TestMergeModelsWithNoPrefixIncludesAll(t *testing.T) {
+	vllmResponse := []byte(`{"object":"list","data":[
+		{"id":"facebook/opt-125m","object":"model"},
+		{"id":"publishers/default/models/facebook/opt-125m","object":"model"}
+	]}`)
+
+	responses := []BackendResponse{
+		{Backend: Backend{Name: "svc", Namespace: "ns"}, Body: vllmResponse, Status: 200},
+	}
+
+	mergeFn := MergeModelsWithPrefixes()
+	result, _, err := mergeFn(responses)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	resp := result.(ListModelsResponse)
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected 2 models with no prefix filter, got %d", len(resp.Data))
+	}
+}
+
+func TestMergeModelsWithMultiplePrefixes(t *testing.T) {
+	response := []byte(`{"object":"list","data":[
+		{"id":"facebook/opt-125m","object":"model"},
+		{"id":"publishers/default/models/facebook/opt-125m","object":"model"},
+		{"id":"custom/my-model","object":"model"}
+	]}`)
+
+	responses := []BackendResponse{
+		{Backend: Backend{Name: "svc", Namespace: "ns"}, Body: response, Status: 200},
+	}
+
+	mergeFn := MergeModelsWithPrefixes("publishers/", "custom/")
+	result, _, err := mergeFn(responses)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	resp := result.(ListModelsResponse)
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected 2 models matching prefixes, got %d", len(resp.Data))
+	}
+}
+
 func TestMergeHealthResponsesAllHealthy(t *testing.T) {
 	responses := []BackendResponse{
 		{Backend: Backend{Name: "b1", Namespace: "ns"}, Body: []byte(`{}`), Status: 200},
