@@ -26,7 +26,7 @@ import (
 func MergeModelsResponses(responses []BackendResponse) (any, int, error) {
 	merged := ListModelsResponse{
 		Object: "list",
-		Data:   []Model{},
+		Data:   []json.RawMessage{},
 	}
 
 	for _, resp := range responses {
@@ -37,13 +37,29 @@ func MergeModelsResponses(responses []BackendResponse) (any, int, error) {
 		if err := json.Unmarshal(resp.Body, &lr); err != nil {
 			continue
 		}
-		for _, m := range lr.Data {
-			m.OwnedBy = resp.Backend.Name + "/" + resp.Backend.Namespace
-			merged.Data = append(merged.Data, m)
+		for _, raw := range lr.Data {
+			patched, err := patchOwnedBy(raw, resp.Backend.Name+"/"+resp.Backend.Namespace)
+			if err != nil {
+				continue
+			}
+			merged.Data = append(merged.Data, patched)
 		}
 	}
 
 	return merged, http.StatusOK, nil
+}
+
+func patchOwnedBy(raw json.RawMessage, owner string) (json.RawMessage, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	ownerJSON, err := json.Marshal(owner)
+	if err != nil {
+		return nil, err
+	}
+	m["owned_by"] = ownerJSON
+	return json.Marshal(m)
 }
 
 func MergeHealthResponses(responses []BackendResponse) (any, int, error) {

@@ -16,14 +16,12 @@ limitations under the License.
 
 package server
 
-type Model struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
-}
+import "encoding/json"
 
+// ListModelsResponse represents an OpenAI-compatible /v1/models response.
+// Data uses json.RawMessage to preserve all backend-specific fields
+// (e.g. vLLM's root, parent, max_model_len, permission) during aggregation.
 type ListModelsResponse struct {
-	Object string  `json:"object"`
-	Data   []Model `json:"data"`
+	Object string            `json:"object"`
+	Data   []json.RawMessage `json:"data"`
 }

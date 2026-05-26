@@ -25,14 +25,8 @@ import (
 )
 
 func TestMergeModelsResponsesUnion(t *testing.T) {
-	r1, _ := json.Marshal(ListModelsResponse{
-		Object: "list",
-		Data:   []Model{{ID: "model-a", Object: "model", Created: 1}},
-	})
-	r2, _ := json.Marshal(ListModelsResponse{
-		Object: "list",
-		Data:   []Model{{ID: "model-b", Object: "model", Created: 2}},
-	})
+	r1 := []byte(`{"object":"list","data":[{"id":"model-a","object":"model","created":1}]}`)
+	r2 := []byte(`{"object":"list","data":[{"id":"model-b","object":"model","created":2}]}`)
 
 	responses := []BackendResponse{
 		{Backend: Backend{Name: "b1", Namespace: "ns1"}, Body: r1, Status: 200},
@@ -53,8 +47,12 @@ func TestMergeModelsResponsesUnion(t *testing.T) {
 	}
 
 	found := make(map[string]string)
-	for _, m := range resp.Data {
-		found[m.ID] = m.OwnedBy
+	for _, raw := range resp.Data {
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("failed to unmarshal model: %v", err)
+		}
+		found[m["id"].(string)] = m["owned_by"].(string)
 	}
 	if found["model-a"] != "b1/ns1" {
 		t.Errorf("model-a OwnedBy = %q, want %q", found["model-a"], "b1/ns1")
@@ -79,6 +77,48 @@ func TestMergeModelsResponsesEmpty(t *testing.T) {
 	}
 	if resp.Object != "list" {
 		t.Fatalf("expected object 'list', got %s", resp.Object)
+	}
+}
+
+func TestMergeModelsResponsesPreservesExtraFields(t *testing.T) {
+	vllmResponse := []byte(`{"object":"list","data":[{
+		"id":"facebook/opt-125m","object":"model","created":1779787746,"owned_by":"vllm",
+		"root":"/mnt/models","parent":null,"max_model_len":2048,
+		"permission":[{"id":"modelperm-123","object":"model_permission","created":1779787746,
+		"allow_sampling":true,"allow_logprobs":true,"organization":"*"}]
+	}]}`)
+
+	responses := []BackendResponse{
+		{Backend: Backend{Name: "opt-svc", Namespace: "default"}, Body: vllmResponse, Status: 200},
+	}
+
+	result, _, err := MergeModelsResponses(responses)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	resp := result.(ListModelsResponse)
+	if len(resp.Data) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(resp.Data))
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(resp.Data[0], &m); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if m["owned_by"] != "opt-svc/default" {
+		t.Errorf("owned_by = %v, want opt-svc/default", m["owned_by"])
+	}
+	if m["root"] != "/mnt/models" {
+		t.Errorf("root field not preserved: %v", m["root"])
+	}
+	if m["max_model_len"] != float64(2048) {
+		t.Errorf("max_model_len not preserved: %v", m["max_model_len"])
+	}
+	perms, ok := m["permission"].([]any)
+	if !ok || len(perms) != 1 {
+		t.Errorf("permission field not preserved: %v", m["permission"])
 	}
 }
 

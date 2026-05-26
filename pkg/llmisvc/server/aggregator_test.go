@@ -17,7 +17,6 @@ limitations under the License.
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -28,18 +27,14 @@ import (
 
 func TestFanOutMultipleBackends(t *testing.T) {
 	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ListModelsResponse{
-			Object: "list",
-			Data:   []Model{{ID: "model-a", Object: "model", Created: 1, OwnedBy: "test"}},
-		})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"object":"list","data":[{"id":"model-a","object":"model","created":1,"owned_by":"test"}]}`))
 	}))
 	defer srv1.Close()
 
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ListModelsResponse{
-			Object: "list",
-			Data:   []Model{{ID: "model-b", Object: "model", Created: 2, OwnedBy: "test"}},
-		})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"object":"list","data":[{"id":"model-b","object":"model","created":2,"owned_by":"test"}]}`))
 	}))
 	defer srv2.Close()
 
@@ -139,21 +134,19 @@ func TestFanOutFailAllPolicy(t *testing.T) {
 }
 
 func TestFanOutReturnPartialPolicy(t *testing.T) {
-	srvOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ListModelsResponse{
-			Object: "list",
-			Data:   []Model{{ID: "model-ok", Object: "model"}},
-		})
+	srvOK2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"object":"list","data":[{"id":"model-ok","object":"model"}]}`))
 	}))
-	defer srvOK.Close()
+	defer srvOK2.Close()
 
-	srvFail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srvFail2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer srvFail.Close()
+	defer srvFail2.Close()
 
-	u1, _ := url.Parse(srvOK.URL)
-	u2, _ := url.Parse(srvFail.URL)
+	u1, _ := url.Parse(srvOK2.URL)
+	u2, _ := url.Parse(srvFail2.URL)
 
 	discovery := NewStaticDiscovery([]Backend{
 		{Name: "ok", Namespace: "ns", URL: u1, Ready: true},
@@ -186,10 +179,8 @@ func TestFanOutFilterFunction(t *testing.T) {
 	handler := func(name string) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			called[name] = true
-			json.NewEncoder(w).Encode(ListModelsResponse{
-				Object: "list",
-				Data:   []Model{{ID: fmt.Sprintf("model-%s", name), Object: "model"}},
-			})
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(fmt.Sprintf(`{"object":"list","data":[{"id":"model-%s","object":"model"}]}`, name)))
 		})
 	}
 

@@ -26,12 +26,8 @@ import (
 
 func TestModelsHandlerReturnsValidResponse(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ListModelsResponse{
-			Object: "list",
-			Data: []Model{
-				{ID: "llama-3", Object: "model", Created: 100, OwnedBy: "meta"},
-			},
-		})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"object":"list","data":[{"id":"llama-3","object":"model","created":100,"owned_by":"meta"}]}`))
 	}))
 	defer backend.Close()
 
@@ -61,8 +57,16 @@ func TestModelsHandlerReturnsValidResponse(t *testing.T) {
 	if len(resp.Data) != 1 {
 		t.Fatalf("expected 1 model, got %d", len(resp.Data))
 	}
-	if resp.Data[0].ID != "llama-3" {
-		t.Fatalf("expected model ID 'llama-3', got %s", resp.Data[0].ID)
+
+	var m map[string]any
+	if err := json.Unmarshal(resp.Data[0], &m); err != nil {
+		t.Fatalf("failed to unmarshal model: %v", err)
+	}
+	if m["id"] != "llama-3" {
+		t.Fatalf("expected model ID 'llama-3', got %v", m["id"])
+	}
+	if m["owned_by"] != "llama-backend/default" {
+		t.Fatalf("expected owned_by 'llama-backend/default', got %v", m["owned_by"])
 	}
 }
 
@@ -133,6 +137,37 @@ func TestHealthHandlerUnhealthyBackend(t *testing.T) {
 	}
 	if hs.Status != "unhealthy" {
 		t.Fatalf("expected unhealthy status, got %s", hs.Status)
+	}
+}
+
+func TestHealthHandlerEmptyBody(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	u, _ := url.Parse(backend.URL)
+	discovery := NewStaticDiscovery([]Backend{
+		{Name: "vllm-backend", Namespace: "default", URL: u, Ready: true},
+	})
+	agg := NewAggregator(discovery)
+
+	handler := HealthHandler(agg)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var hs HealthStatus
+	if err := json.NewDecoder(rec.Body).Decode(&hs); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if hs.Status != "healthy" {
+		t.Fatalf("expected healthy, got %s", hs.Status)
 	}
 }
 
