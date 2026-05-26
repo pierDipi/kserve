@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
@@ -35,6 +36,45 @@ type GatewayTarget struct {
 	Name        string
 	Namespace   string
 	SectionName string
+}
+
+type gatewayTargetKey struct{}
+
+// GatewayTargetFromContext retrieves a GatewayTarget from the context, if present.
+func GatewayTargetFromContext(ctx context.Context) (GatewayTarget, bool) {
+	gt, ok := ctx.Value(gatewayTargetKey{}).(GatewayTarget)
+	return gt, ok
+}
+
+// ContextWithGatewayTarget returns a new context carrying the given GatewayTarget.
+func ContextWithGatewayTarget(ctx context.Context, gt GatewayTarget) context.Context {
+	return context.WithValue(ctx, gatewayTargetKey{}, gt)
+}
+
+const (
+	HeaderGatewayName        = "X-Gateway-Name"
+	HeaderGatewayNamespace   = "X-Gateway-Namespace"
+	HeaderGatewaySectionName = "X-Gateway-Section-Name"
+)
+
+// GatewayHeaderMiddleware extracts gateway target information from request
+// headers and injects it into the request context. This allows an auth layer
+// to dynamically select the gateway for discovery. If X-Gateway-Name and
+// X-Gateway-Namespace are both present, they override any static configuration.
+func GatewayHeaderMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.Header.Get(HeaderGatewayName)
+		ns := r.Header.Get(HeaderGatewayNamespace)
+		if name != "" && ns != "" {
+			gt := GatewayTarget{
+				Name:        name,
+				Namespace:   ns,
+				SectionName: r.Header.Get(HeaderGatewaySectionName),
+			}
+			r = r.WithContext(ContextWithGatewayTarget(r.Context(), gt))
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // HTTPRouteDiscovery discovers backends by listing HTTPRoutes that are accepted
@@ -68,6 +108,11 @@ func NewHTTPRouteDiscovery(c client.Client, gw GatewayTarget, opts ...HTTPRouteD
 }
 
 func (d *HTTPRouteDiscovery) Discover(ctx context.Context) ([]Backend, error) {
+	gw := d.gateway
+	if ctxGW, ok := GatewayTargetFromContext(ctx); ok {
+		gw = ctxGW
+	}
+
 	var routeList gwapiv1.HTTPRouteList
 
 	listOpts := []client.ListOption{}
@@ -85,11 +130,11 @@ func (d *HTTPRouteDiscovery) Discover(ctx context.Context) ([]Backend, error) {
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
 
-		if !d.routeTargetsGateway(route) {
+		if !routeTargetsGateway(route, gw) {
 			continue
 		}
 
-		if !d.routeAccepted(route) {
+		if !routeAccepted(route, gw) {
 			continue
 		}
 
@@ -106,9 +151,9 @@ func (d *HTTPRouteDiscovery) Discover(ctx context.Context) ([]Backend, error) {
 	return backends, nil
 }
 
-func (d *HTTPRouteDiscovery) routeTargetsGateway(route *gwapiv1.HTTPRoute) bool {
+func routeTargetsGateway(route *gwapiv1.HTTPRoute, gw GatewayTarget) bool {
 	for _, ref := range route.Spec.ParentRefs {
-		if !parentRefMatchesGateway(ref, route.Namespace, d.gateway) {
+		if !parentRefMatchesGateway(ref, route.Namespace, gw) {
 			continue
 		}
 		return true
@@ -145,9 +190,9 @@ func parentRefMatchesGateway(ref gwapiv1.ParentReference, routeNamespace string,
 	return true
 }
 
-func (d *HTTPRouteDiscovery) routeAccepted(route *gwapiv1.HTTPRoute) bool {
+func routeAccepted(route *gwapiv1.HTTPRoute, gw GatewayTarget) bool {
 	for _, parentStatus := range route.Status.Parents {
-		if !parentRefMatchesGateway(parentStatus.ParentRef, route.Namespace, d.gateway) {
+		if !parentRefMatchesGateway(parentStatus.ParentRef, route.Namespace, gw) {
 			continue
 		}
 

@@ -18,6 +18,8 @@ package server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
@@ -621,4 +623,140 @@ func TestHTTPRouteDiscoverySkipsNonServiceBackendRefs(t *testing.T) {
 	if len(backends) != 0 {
 		t.Fatalf("expected 0 backends for InferencePool backendRef, got %d", len(backends))
 	}
+}
+
+func TestHTTPRouteDiscoveryContextOverride(t *testing.T) {
+	scheme := httpRouteTestScheme()
+
+	routeGW1 := &gwapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route-gw1", Namespace: "default"},
+		Spec: gwapiv1.HTTPRouteSpec{
+			CommonRouteSpec: gwapiv1.CommonRouteSpec{
+				ParentRefs: []gwapiv1.ParentReference{
+					{Name: "gw-1", Namespace: ptr.To(gwapiv1.Namespace("infra"))},
+				},
+			},
+			Rules: []gwapiv1.HTTPRouteRule{
+				{BackendRefs: []gwapiv1.HTTPBackendRef{
+					{BackendRef: gwapiv1.BackendRef{BackendObjectReference: gwapiv1.BackendObjectReference{
+						Name: "svc-1", Port: ptr.To(gwapiv1.PortNumber(8000)),
+					}}},
+				}},
+			},
+		},
+		Status: gwapiv1.HTTPRouteStatus{
+			RouteStatus: gwapiv1.RouteStatus{
+				Parents: []gwapiv1.RouteParentStatus{acceptedParentStatus("gw-1", "infra")},
+			},
+		},
+	}
+
+	routeGW2 := &gwapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route-gw2", Namespace: "default"},
+		Spec: gwapiv1.HTTPRouteSpec{
+			CommonRouteSpec: gwapiv1.CommonRouteSpec{
+				ParentRefs: []gwapiv1.ParentReference{
+					{Name: "gw-2", Namespace: ptr.To(gwapiv1.Namespace("infra"))},
+				},
+			},
+			Rules: []gwapiv1.HTTPRouteRule{
+				{BackendRefs: []gwapiv1.HTTPBackendRef{
+					{BackendRef: gwapiv1.BackendRef{BackendObjectReference: gwapiv1.BackendObjectReference{
+						Name: "svc-2", Port: ptr.To(gwapiv1.PortNumber(8000)),
+					}}},
+				}},
+			},
+		},
+		Status: gwapiv1.HTTPRouteStatus{
+			RouteStatus: gwapiv1.RouteStatus{
+				Parents: []gwapiv1.RouteParentStatus{acceptedParentStatus("gw-2", "infra")},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(routeGW1, routeGW2).
+		Build()
+
+	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "gw-1", Namespace: "infra"})
+
+	// Without context override: uses static gateway (gw-1)
+	backends, err := d.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(backends) != 1 || backends[0].Name != "svc-1" {
+		t.Fatalf("expected svc-1 from static gateway, got %v", backends)
+	}
+
+	// With context override: uses gw-2 instead of gw-1
+	ctx := ContextWithGatewayTarget(context.Background(), GatewayTarget{Name: "gw-2", Namespace: "infra"})
+	backends, err = d.Discover(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(backends) != 1 || backends[0].Name != "svc-2" {
+		t.Fatalf("expected svc-2 from context override, got %v", backends)
+	}
+}
+
+func TestGatewayHeaderMiddleware(t *testing.T) {
+	var captured GatewayTarget
+	var found bool
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, found = GatewayTargetFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := GatewayHeaderMiddleware(inner)
+
+	t.Run("injects gateway target from headers", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		req.Header.Set(HeaderGatewayName, "my-gw")
+		req.Header.Set(HeaderGatewayNamespace, "my-ns")
+		req.Header.Set(HeaderGatewaySectionName, "https")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if !found {
+			t.Fatal("expected GatewayTarget in context")
+		}
+		if captured.Name != "my-gw" {
+			t.Fatalf("expected name my-gw, got %s", captured.Name)
+		}
+		if captured.Namespace != "my-ns" {
+			t.Fatalf("expected namespace my-ns, got %s", captured.Namespace)
+		}
+		if captured.SectionName != "https" {
+			t.Fatalf("expected section https, got %s", captured.SectionName)
+		}
+	})
+
+	t.Run("no headers means no context value", func(t *testing.T) {
+		found = false
+		req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if found {
+			t.Fatal("expected no GatewayTarget in context without headers")
+		}
+	})
+
+	t.Run("partial headers ignored", func(t *testing.T) {
+		found = false
+		req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		req.Header.Set(HeaderGatewayName, "my-gw")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if found {
+			t.Fatal("expected no GatewayTarget with only name header")
+		}
+	})
 }

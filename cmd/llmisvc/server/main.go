@@ -146,9 +146,14 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
+	var handler http.Handler = mux
+	if gatewayName != "" {
+		handler = aggserver.GatewayHeaderMiddleware(mux)
+	}
+
 	srv := &http.Server{
 		Addr:    listenAddr,
-		Handler: mux,
+		Handler: handler,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
