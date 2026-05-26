@@ -46,3 +46,9 @@ func WithHTTPClient(c *http.Client) Option {
 		a.HTTPClient = c
 	}
 }
+
+func WithForwardHeaders(headers []string) Option {
+	return func(a *Aggregator) {
+		a.ForwardHeaders = headers
+	}
+}

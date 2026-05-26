@@ -243,3 +243,96 @@ func TestFanOutZeroBackends(t *testing.T) {
 		t.Fatalf("expected 0 models, got %d", len(resp.Data))
 	}
 }
+
+func TestForwardHeadersDefault(t *testing.T) {
+	var receivedAuth string
+	var receivedCookie string
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		receivedCookie = r.Header.Get("Cookie")
+		w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	defer backend.Close()
+
+	u, _ := url.Parse(backend.URL)
+	discovery := NewStaticDiscovery([]Backend{
+		{Name: "svc", Namespace: "ns", URL: u, Ready: true},
+	})
+
+	agg := NewAggregator(discovery)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer token-123")
+	req.Header.Set("Cookie", "session=abc")
+
+	_, _, err := agg.FanOut(req.Context(), req, "/v1/models", MergeModelsResponses)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedAuth != "Bearer token-123" {
+		t.Fatalf("expected Authorization header, got %q", receivedAuth)
+	}
+	if receivedCookie != "session=abc" {
+		t.Fatalf("expected Cookie header, got %q", receivedCookie)
+	}
+}
+
+func TestForwardHeadersCustom(t *testing.T) {
+	var receivedCustom string
+	var receivedAuth string
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedCustom = r.Header.Get("X-Custom")
+		receivedAuth = r.Header.Get("Authorization")
+		w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	defer backend.Close()
+
+	u, _ := url.Parse(backend.URL)
+	discovery := NewStaticDiscovery([]Backend{
+		{Name: "svc", Namespace: "ns", URL: u, Ready: true},
+	})
+
+	agg := NewAggregator(discovery, WithForwardHeaders([]string{"X-Custom"}))
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("X-Custom", "custom-value")
+	req.Header.Set("Authorization", "Bearer should-not-forward")
+
+	_, _, err := agg.FanOut(req.Context(), req, "/v1/models", MergeModelsResponses)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedCustom != "custom-value" {
+		t.Fatalf("expected X-Custom header, got %q", receivedCustom)
+	}
+	if receivedAuth != "" {
+		t.Fatalf("expected Authorization to be blocked, got %q", receivedAuth)
+	}
+}
+
+func TestForwardHeadersBlocksUnlisted(t *testing.T) {
+	var receivedSecret string
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedSecret = r.Header.Get("X-Secret")
+		w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	defer backend.Close()
+
+	u, _ := url.Parse(backend.URL)
+	discovery := NewStaticDiscovery([]Backend{
+		{Name: "svc", Namespace: "ns", URL: u, Ready: true},
+	})
+
+	agg := NewAggregator(discovery)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("X-Secret", "should-not-appear")
+
+	_, _, err := agg.FanOut(req.Context(), req, "/v1/models", MergeModelsResponses)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedSecret != "" {
+		t.Fatalf("expected X-Secret to be blocked, got %q", receivedSecret)
+	}
+}
