@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -122,7 +123,7 @@ func TestMergeModelsResponsesPreservesExtraFields(t *testing.T) {
 	}
 }
 
-func TestMergeModelsWithPrefixFiltering(t *testing.T) {
+func TestMergeModelsWithRegexFiltering(t *testing.T) {
 	vllmResponse := []byte(`{"object":"list","data":[
 		{"id":"facebook/opt-125m","object":"model","created":1779787746,"owned_by":"vllm"},
 		{"id":"publishers/default/models/facebook/opt-125m","object":"model","created":1779787746,"owned_by":"vllm"}
@@ -132,7 +133,7 @@ func TestMergeModelsWithPrefixFiltering(t *testing.T) {
 		{Backend: Backend{Name: "opt-svc", Namespace: "default"}, Body: vllmResponse, Status: 200},
 	}
 
-	mergeFn := MergeModelsWithPrefixes("publishers/")
+	mergeFn := MergeModelsWithIDFilter(regexp.MustCompile(`^publishers/`))
 	result, status, err := mergeFn(responses)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -143,7 +144,7 @@ func TestMergeModelsWithPrefixFiltering(t *testing.T) {
 
 	resp := result.(ListModelsResponse)
 	if len(resp.Data) != 1 {
-		t.Fatalf("expected 1 model after prefix filtering, got %d", len(resp.Data))
+		t.Fatalf("expected 1 model after regex filtering, got %d", len(resp.Data))
 	}
 
 	var m map[string]any
@@ -155,7 +156,7 @@ func TestMergeModelsWithPrefixFiltering(t *testing.T) {
 	}
 }
 
-func TestMergeModelsWithNoPrefixIncludesAll(t *testing.T) {
+func TestMergeModelsWithNilFilterIncludesAll(t *testing.T) {
 	vllmResponse := []byte(`{"object":"list","data":[
 		{"id":"facebook/opt-125m","object":"model"},
 		{"id":"publishers/default/models/facebook/opt-125m","object":"model"}
@@ -165,7 +166,7 @@ func TestMergeModelsWithNoPrefixIncludesAll(t *testing.T) {
 		{Backend: Backend{Name: "svc", Namespace: "ns"}, Body: vllmResponse, Status: 200},
 	}
 
-	mergeFn := MergeModelsWithPrefixes()
+	mergeFn := MergeModelsWithIDFilter(nil)
 	result, _, err := mergeFn(responses)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -173,11 +174,11 @@ func TestMergeModelsWithNoPrefixIncludesAll(t *testing.T) {
 
 	resp := result.(ListModelsResponse)
 	if len(resp.Data) != 2 {
-		t.Fatalf("expected 2 models with no prefix filter, got %d", len(resp.Data))
+		t.Fatalf("expected 2 models with nil filter, got %d", len(resp.Data))
 	}
 }
 
-func TestMergeModelsWithMultiplePrefixes(t *testing.T) {
+func TestMergeModelsWithComplexRegex(t *testing.T) {
 	response := []byte(`{"object":"list","data":[
 		{"id":"facebook/opt-125m","object":"model"},
 		{"id":"publishers/default/models/facebook/opt-125m","object":"model"},
@@ -188,7 +189,7 @@ func TestMergeModelsWithMultiplePrefixes(t *testing.T) {
 		{Backend: Backend{Name: "svc", Namespace: "ns"}, Body: response, Status: 200},
 	}
 
-	mergeFn := MergeModelsWithPrefixes("publishers/", "custom/")
+	mergeFn := MergeModelsWithIDFilter(regexp.MustCompile(`^(publishers/|custom/)`))
 	result, _, err := mergeFn(responses)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -196,7 +197,7 @@ func TestMergeModelsWithMultiplePrefixes(t *testing.T) {
 
 	resp := result.(ListModelsResponse)
 	if len(resp.Data) != 2 {
-		t.Fatalf("expected 2 models matching prefixes, got %d", len(resp.Data))
+		t.Fatalf("expected 2 models matching regex, got %d", len(resp.Data))
 	}
 }
 

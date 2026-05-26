@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -55,7 +55,7 @@ func main() {
 		gatewayName      string
 		gatewayNamespace string
 		gatewaySection   string
-		modelIDPrefix    string
+		modelIDFilter string
 	)
 
 	flag.StringVar(&listenAddr, "listen-addr", ":8080", "Address to listen on")
@@ -66,7 +66,7 @@ func main() {
 	flag.StringVar(&gatewayName, "gateway-name", "", "Gateway name to filter HTTPRoutes by (enables HTTPRoute-based discovery)")
 	flag.StringVar(&gatewayNamespace, "gateway-namespace", "", "Gateway namespace (required when --gateway-name is set)")
 	flag.StringVar(&gatewaySection, "gateway-section", "", "Gateway listener section name (optional)")
-	flag.StringVar(&modelIDPrefix, "model-id-prefix", "publishers/", "Comma-separated model ID prefixes to include in /v1/models (empty string disables filtering)")
+	flag.StringVar(&modelIDFilter, "model-id-filter", `^publishers/`, "Regex to filter model IDs in /v1/models (empty string disables filtering)")
 	flag.Parse()
 
 	if kubeconfig != "" {
@@ -125,11 +125,15 @@ func main() {
 	)
 
 	var modelsOpts []aggserver.ModelsHandlerOption
-	if modelIDPrefix != "" {
-		prefixes := strings.Split(modelIDPrefix, ",")
-		modelsOpts = append(modelsOpts, aggserver.WithModelIDPrefixes(prefixes...))
+	if modelIDFilter != "" {
+		re, err := regexp.Compile(modelIDFilter)
+		if err != nil {
+			slog.Error("invalid --model-id-filter regex", "pattern", modelIDFilter, "error", err)
+			os.Exit(1)
+		}
+		modelsOpts = append(modelsOpts, aggserver.WithModelIDFilter(re))
 	} else {
-		modelsOpts = append(modelsOpts, aggserver.WithModelIDPrefixes())
+		modelsOpts = append(modelsOpts, aggserver.WithModelIDFilter(nil))
 	}
 
 	mux := http.NewServeMux()

@@ -132,7 +132,7 @@ func TestModelsHandlerNoFilterIncludesAll(t *testing.T) {
 	})
 	agg := NewAggregator(discovery)
 
-	handler := ModelsHandler(agg, WithModelIDPrefixes())
+	handler := ModelsHandler(agg, WithModelIDFilter(nil))
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	rec := httptest.NewRecorder()
 
@@ -143,7 +143,7 @@ func TestModelsHandlerNoFilterIncludesAll(t *testing.T) {
 		t.Fatalf("failed to decode: %v", err)
 	}
 	if len(resp.Data) != 2 {
-		t.Fatalf("expected 2 models with no prefix filter, got %d", len(resp.Data))
+		t.Fatalf("expected 2 models with nil filter, got %d", len(resp.Data))
 	}
 }
 

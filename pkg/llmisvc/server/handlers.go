@@ -21,37 +21,36 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 )
 
-// DefaultModelIDPrefixes is the default set of model ID prefixes to include
-// in aggregated /v1/models responses. Models whose ID does not start with
-// one of these prefixes are filtered out.
-var DefaultModelIDPrefixes = []string{"publishers/"}
+// DefaultModelIDFilter matches model IDs starting with "publishers/".
+var DefaultModelIDFilter = regexp.MustCompile(`^publishers/`)
 
 type ModelsHandlerOption func(*modelsHandlerConfig)
 
 type modelsHandlerConfig struct {
-	modelIDPrefixes []string
+	modelIDFilter *regexp.Regexp
 }
 
-// WithModelIDPrefixes sets the model ID prefixes to filter by. Only models
-// whose ID starts with one of the given prefixes will be included. Pass an
-// empty slice to disable filtering and include all models.
-func WithModelIDPrefixes(prefixes ...string) ModelsHandlerOption {
+// WithModelIDFilter sets a regex pattern to filter model IDs. Only models
+// whose ID matches the pattern will be included. Pass nil to disable
+// filtering and include all models.
+func WithModelIDFilter(pattern *regexp.Regexp) ModelsHandlerOption {
 	return func(c *modelsHandlerConfig) {
-		c.modelIDPrefixes = prefixes
+		c.modelIDFilter = pattern
 	}
 }
 
 func ModelsHandler(a *Aggregator, opts ...ModelsHandlerOption) http.Handler {
 	cfg := &modelsHandlerConfig{
-		modelIDPrefixes: DefaultModelIDPrefixes,
+		modelIDFilter: DefaultModelIDFilter,
 	}
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
-	mergeFn := MergeModelsWithPrefixes(cfg.modelIDPrefixes...)
+	mergeFn := MergeModelsWithIDFilter(cfg.modelIDFilter)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
