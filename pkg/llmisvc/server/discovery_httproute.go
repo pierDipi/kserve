@@ -78,10 +78,10 @@ func GatewayHeaderMiddleware(next http.Handler) http.Handler {
 }
 
 // HTTPRouteDiscovery discovers backends by listing HTTPRoutes that are accepted
-// by a target Gateway. This handles both controller-managed and externally
-// managed (BYO) HTTPRoutes. For managed routes, the owning LLMInferenceService
-// is resolved via owner references to obtain the canonical service URL. For BYO
-// routes, backend URLs are constructed from the route's backendRefs.
+// by a target Gateway. Requests to backends are routed through the Gateway
+// using the route's hostname as the Host header. For managed routes, the owning
+// LLMInferenceService is resolved via owner references. For BYO routes, the
+// hostname is taken from the route's spec.
 type HTTPRouteDiscovery struct {
 	client    client.Client
 	gateway   GatewayTarget
@@ -113,6 +113,11 @@ func (d *HTTPRouteDiscovery) Discover(ctx context.Context) ([]Backend, error) {
 		gw = ctxGW
 	}
 
+	gwURL, err := d.resolveGatewayURL(ctx, gw)
+	if err != nil {
+		return nil, fmt.Errorf("resolving gateway address: %w", err)
+	}
+
 	var routeList gwapiv1.HTTPRouteList
 
 	listOpts := []client.ListOption{}
@@ -138,17 +143,54 @@ func (d *HTTPRouteDiscovery) Discover(ctx context.Context) ([]Backend, error) {
 			continue
 		}
 
-		// Controller-managed routes have an owner reference to the LLMInferenceService.
-		if b, ok := d.resolveFromOwner(ctx, route, seen); ok {
+		if b, ok := d.resolveFromOwner(ctx, route, gwURL, seen); ok {
 			backends = append(backends, b...)
 			continue
 		}
 
-		// BYO routes: extract backends directly from backendRefs.
-		backends = append(backends, d.resolveFromBackendRefs(route, seen)...)
+		backends = append(backends, d.resolveFromBackendRefs(route, gwURL, seen)...)
 	}
 
 	return backends, nil
+}
+
+// resolveGatewayURL fetches the Gateway resource and returns a URL built from
+// its status address and the matching listener port.
+func (d *HTTPRouteDiscovery) resolveGatewayURL(ctx context.Context, gw GatewayTarget) (*url.URL, error) {
+	var gateway gwapiv1.Gateway
+	if err := d.client.Get(ctx, types.NamespacedName{
+		Name:      gw.Name,
+		Namespace: gw.Namespace,
+	}, &gateway); err != nil {
+		return nil, fmt.Errorf("getting Gateway %s/%s: %w", gw.Namespace, gw.Name, err)
+	}
+
+	if len(gateway.Status.Addresses) == 0 {
+		return nil, fmt.Errorf("gateway %s/%s has no addresses", gw.Namespace, gw.Name)
+	}
+
+	address := gateway.Status.Addresses[0].Value
+
+	port, scheme := listenerPortAndScheme(&gateway, gw.SectionName)
+
+	return &url.URL{
+		Scheme: scheme,
+		Host:   fmt.Sprintf("%s:%d", address, port),
+	}, nil
+}
+
+func listenerPortAndScheme(gw *gwapiv1.Gateway, sectionName string) (int32, string) {
+	for _, l := range gw.Spec.Listeners {
+		if sectionName != "" && string(l.Name) != sectionName {
+			continue
+		}
+		scheme := "http"
+		if l.Protocol == gwapiv1.HTTPSProtocolType || l.Protocol == gwapiv1.TLSProtocolType {
+			scheme = "https"
+		}
+		return int32(l.Port), scheme
+	}
+	return 80, "http"
 }
 
 func routeTargetsGateway(route *gwapiv1.HTTPRoute, gw GatewayTarget) bool {
@@ -217,7 +259,7 @@ func routeAccepted(route *gwapiv1.HTTPRoute, gw GatewayTarget) bool {
 	return false
 }
 
-func (d *HTTPRouteDiscovery) resolveFromOwner(ctx context.Context, route *gwapiv1.HTTPRoute, seen map[string]bool) ([]Backend, bool) {
+func (d *HTTPRouteDiscovery) resolveFromOwner(ctx context.Context, route *gwapiv1.HTTPRoute, gwURL *url.URL, seen map[string]bool) ([]Backend, bool) {
 	for _, ownerRef := range route.OwnerReferences {
 		if ownerRef.APIVersion != v1alpha2.SchemeGroupVersion.String() || ownerRef.Kind != "LLMInferenceService" {
 			continue
@@ -238,15 +280,15 @@ func (d *HTTPRouteDiscovery) resolveFromOwner(ctx context.Context, route *gwapiv
 			return nil, true
 		}
 
-		endpointURL := llmSvcURL(&llmSvc)
-		if endpointURL == "" {
-			slog.Warn("LLMInferenceService has no URL", "name", llmSvc.Name, "namespace", llmSvc.Namespace)
-			return nil, true
+		host := llmSvcHost(&llmSvc)
+		if host == "" {
+			// Fall back to route hostnames.
+			if len(route.Spec.Hostnames) > 0 {
+				host = string(route.Spec.Hostnames[0])
+			}
 		}
-
-		parsedURL, err := url.Parse(endpointURL)
-		if err != nil {
-			slog.Warn("invalid LLMInferenceService URL", "name", llmSvc.Name, "url", endpointURL, "error", err)
+		if host == "" {
+			slog.Warn("LLMInferenceService has no hostname", "name", llmSvc.Name, "namespace", llmSvc.Namespace)
 			return nil, true
 		}
 
@@ -259,7 +301,8 @@ func (d *HTTPRouteDiscovery) resolveFromOwner(ctx context.Context, route *gwapiv
 		return []Backend{{
 			Name:      llmSvc.Name,
 			Namespace: llmSvc.Namespace,
-			URL:       parsedURL,
+			URL:       gwURL,
+			Host:      host,
 			Labels:    llmSvc.Labels,
 			Ready:     ready,
 		}}, true
@@ -267,17 +310,23 @@ func (d *HTTPRouteDiscovery) resolveFromOwner(ctx context.Context, route *gwapiv
 	return nil, false
 }
 
-func llmSvcURL(svc *v1alpha2.LLMInferenceService) string {
+// llmSvcHost extracts the hostname from the LLMInferenceService status URL.
+func llmSvcHost(svc *v1alpha2.LLMInferenceService) string {
 	if svc.Status.URL != nil {
-		return svc.Status.URL.String()
+		return svc.Status.URL.Host
 	}
 	if len(svc.Status.Addresses) > 0 && svc.Status.Addresses[0].URL != nil {
-		return svc.Status.Addresses[0].URL.String()
+		return svc.Status.Addresses[0].URL.Host
 	}
 	return ""
 }
 
-func (d *HTTPRouteDiscovery) resolveFromBackendRefs(route *gwapiv1.HTTPRoute, seen map[string]bool) []Backend {
+func (d *HTTPRouteDiscovery) resolveFromBackendRefs(route *gwapiv1.HTTPRoute, gwURL *url.URL, seen map[string]bool) []Backend {
+	var host string
+	if len(route.Spec.Hostnames) > 0 {
+		host = string(route.Spec.Hostnames[0])
+	}
+
 	var backends []Backend
 	for _, rule := range route.Spec.Rules {
 		for _, ref := range rule.BackendRefs {
@@ -299,21 +348,18 @@ func (d *HTTPRouteDiscovery) resolveFromBackendRefs(route *gwapiv1.HTTPRoute, se
 				continue
 			}
 
-			port := int32(8000)
-			if ref.Port != nil {
-				port = int32(*ref.Port)
-			}
-
-			u := &url.URL{
-				Scheme: "http",
-				Host:   fmt.Sprintf("%s.%s.svc.cluster.local:%d", name, ns, port),
+			if host == "" {
+				slog.Warn("BYO HTTPRoute has no hostname, skipping",
+					"route", route.Name, "namespace", route.Namespace)
+				continue
 			}
 
 			seen[key] = true
 			backends = append(backends, Backend{
 				Name:      name,
 				Namespace: ns,
-				URL:       u,
+				URL:       gwURL,
+				Host:      host,
 				Ready:     true,
 			})
 		}

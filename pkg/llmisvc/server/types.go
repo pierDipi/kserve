@@ -26,6 +26,7 @@ type Backend struct {
 	Name      string
 	Namespace string
 	URL       *url.URL
+	Host      string
 	Labels    map[string]string
 	Ready     bool
 }

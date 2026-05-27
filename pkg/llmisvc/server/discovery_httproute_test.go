@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
@@ -56,10 +57,34 @@ func acceptedParentStatus(gwName, gwNamespace string) gwapiv1.RouteParentStatus 
 	}
 }
 
+func testGateway(name, namespace string, port int32, protocol gwapiv1.ProtocolType, address string) *gwapiv1.Gateway {
+	return &gwapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: gwapiv1.GatewaySpec{
+			GatewayClassName: "test-class",
+			Listeners: []gwapiv1.Listener{
+				{
+					Name:     "default",
+					Port:     gwapiv1.PortNumber(port),
+					Protocol: protocol,
+				},
+			},
+		},
+		Status: gwapiv1.GatewayStatus{
+			Addresses: []gwapiv1.GatewayStatusAddress{
+				{Value: address},
+			},
+		},
+	}
+}
+
 func TestHTTPRouteDiscoveryManagedRoute(t *testing.T) {
 	scheme := httpRouteTestScheme()
 
-	statusURL, _ := apis.ParseURL("http://llm-svc.default.svc.cluster.local")
+	statusURL, _ := apis.ParseURL("http://llm-svc.example.com")
 
 	llmSvc := &v1alpha2.LLMInferenceService{
 		ObjectMeta: metav1.ObjectMeta{
@@ -112,9 +137,11 @@ func TestHTTPRouteDiscoveryManagedRoute(t *testing.T) {
 		},
 	}
 
+	gw := testGateway("my-gateway", "infra", 80, gwapiv1.HTTPProtocolType, "10.0.0.1")
+
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(llmSvc, route).
+		WithObjects(llmSvc, route, gw).
 		Build()
 
 	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "my-gateway", Namespace: "infra"})
@@ -128,8 +155,11 @@ func TestHTTPRouteDiscoveryManagedRoute(t *testing.T) {
 	if backends[0].Name != "llm-svc" {
 		t.Fatalf("expected llm-svc, got %s", backends[0].Name)
 	}
-	if backends[0].URL.String() != "http://llm-svc.default.svc.cluster.local" {
-		t.Fatalf("expected URL http://llm-svc.default.svc.cluster.local, got %s", backends[0].URL.String())
+	if backends[0].URL.String() != "http://10.0.0.1:80" {
+		t.Fatalf("expected Gateway URL http://10.0.0.1:80, got %s", backends[0].URL.String())
+	}
+	if backends[0].Host != "llm-svc.example.com" {
+		t.Fatalf("expected Host llm-svc.example.com, got %s", backends[0].Host)
 	}
 	if !backends[0].Ready {
 		t.Fatal("expected backend to be ready")
@@ -145,6 +175,7 @@ func TestHTTPRouteDiscoveryBYORoute(t *testing.T) {
 			Namespace: "team-a",
 		},
 		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"my-model.team-a.example.com"},
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{
 					{
@@ -181,9 +212,11 @@ func TestHTTPRouteDiscoveryBYORoute(t *testing.T) {
 		},
 	}
 
+	gw := testGateway("shared-gw", "infra", 443, gwapiv1.HTTPSProtocolType, "gateway.infra.svc.cluster.local")
+
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route).
+		WithObjects(route, gw).
 		Build()
 
 	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "shared-gw", Namespace: "infra"})
@@ -197,8 +230,11 @@ func TestHTTPRouteDiscoveryBYORoute(t *testing.T) {
 	if backends[0].Name != "my-model-svc" {
 		t.Fatalf("expected my-model-svc, got %s", backends[0].Name)
 	}
-	if backends[0].URL.String() != "http://my-model-svc.team-a.svc.cluster.local:8080" {
-		t.Fatalf("expected http://my-model-svc.team-a.svc.cluster.local:8080, got %s", backends[0].URL.String())
+	if backends[0].URL.String() != "https://gateway.infra.svc.cluster.local:443" {
+		t.Fatalf("expected Gateway URL https://gateway.infra.svc.cluster.local:443, got %s", backends[0].URL.String())
+	}
+	if backends[0].Host != "my-model.team-a.example.com" {
+		t.Fatalf("expected Host my-model.team-a.example.com, got %s", backends[0].Host)
 	}
 }
 
@@ -211,6 +247,7 @@ func TestHTTPRouteDiscoveryFiltersUnacceptedRoutes(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"test.example.com"},
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{
 					{
@@ -256,9 +293,11 @@ func TestHTTPRouteDiscoveryFiltersUnacceptedRoutes(t *testing.T) {
 		},
 	}
 
+	gw := testGateway("my-gw", "infra", 80, gwapiv1.HTTPProtocolType, "10.0.0.1")
+
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route).
+		WithObjects(route, gw).
 		Build()
 
 	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "my-gw", Namespace: "infra"})
@@ -280,6 +319,7 @@ func TestHTTPRouteDiscoveryFiltersByGateway(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"svc-1.example.com"},
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{
 					{Name: "gateway-1", Namespace: ptr.To(gwapiv1.Namespace("infra"))},
@@ -308,6 +348,7 @@ func TestHTTPRouteDiscoveryFiltersByGateway(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"svc-2.example.com"},
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{
 					{Name: "gateway-2", Namespace: ptr.To(gwapiv1.Namespace("infra"))},
@@ -330,9 +371,12 @@ func TestHTTPRouteDiscoveryFiltersByGateway(t *testing.T) {
 		},
 	}
 
+	gw1 := testGateway("gateway-1", "infra", 80, gwapiv1.HTTPProtocolType, "10.0.0.1")
+	gw2 := testGateway("gateway-2", "infra", 80, gwapiv1.HTTPProtocolType, "10.0.0.2")
+
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(routeForGW1, routeForGW2).
+		WithObjects(routeForGW1, routeForGW2, gw1, gw2).
 		Build()
 
 	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "gateway-1", Namespace: "infra"})
@@ -357,6 +401,7 @@ func TestHTTPRouteDiscoverySectionNameFiltering(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"test.example.com"},
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{
 					{
@@ -393,12 +438,26 @@ func TestHTTPRouteDiscoverySectionNameFiltering(t *testing.T) {
 		},
 	}
 
+	gw := &gwapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-gw", Namespace: "infra"},
+		Spec: gwapiv1.GatewaySpec{
+			GatewayClassName: "test-class",
+			Listeners: []gwapiv1.Listener{
+				{Name: "https-listener", Port: 443, Protocol: gwapiv1.HTTPSProtocolType},
+				{Name: "other-listener", Port: 8080, Protocol: gwapiv1.HTTPProtocolType},
+			},
+		},
+		Status: gwapiv1.GatewayStatus{
+			Addresses: []gwapiv1.GatewayStatusAddress{{Value: "10.0.0.1"}},
+		},
+	}
+
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route).
+		WithObjects(route, gw).
 		Build()
 
-	// Should find route when matching section name
+	// Should find route when matching section name, and use matching listener port/scheme
 	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "my-gw", Namespace: "infra", SectionName: "https-listener"})
 	backends, err := d.Discover(context.Background())
 	if err != nil {
@@ -406,6 +465,12 @@ func TestHTTPRouteDiscoverySectionNameFiltering(t *testing.T) {
 	}
 	if len(backends) != 1 {
 		t.Fatalf("expected 1 backend for matching section, got %d", len(backends))
+	}
+	if backends[0].URL.Scheme != "https" {
+		t.Fatalf("expected https scheme for HTTPS listener, got %s", backends[0].URL.Scheme)
+	}
+	if backends[0].URL.Host != "10.0.0.1:443" {
+		t.Fatalf("expected host 10.0.0.1:443, got %s", backends[0].URL.Host)
 	}
 
 	// Should NOT find route when section name doesn't match
@@ -432,7 +497,7 @@ func TestHTTPRouteDiscoverySectionNameFiltering(t *testing.T) {
 func TestHTTPRouteDiscoveryDeduplicates(t *testing.T) {
 	scheme := httpRouteTestScheme()
 
-	statusURL, _ := apis.ParseURL("http://llm-svc.default.svc.cluster.local")
+	statusURL, _ := apis.ParseURL("http://llm-svc.example.com")
 
 	llmSvc := &v1alpha2.LLMInferenceService{
 		ObjectMeta: metav1.ObjectMeta{
@@ -497,9 +562,11 @@ func TestHTTPRouteDiscoveryDeduplicates(t *testing.T) {
 		},
 	}
 
+	gw := testGateway("gw", "infra", 80, gwapiv1.HTTPProtocolType, "10.0.0.1")
+
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(llmSvc, route1, route2).
+		WithObjects(llmSvc, route1, route2, gw).
 		Build()
 
 	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "gw", Namespace: "infra"})
@@ -522,6 +589,7 @@ func TestHTTPRouteDiscoveryStaleConditions(t *testing.T) {
 			Generation: 5,
 		},
 		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"stale.example.com"},
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{
 					{Name: "gw", Namespace: ptr.To(gwapiv1.Namespace("infra"))},
@@ -561,9 +629,11 @@ func TestHTTPRouteDiscoveryStaleConditions(t *testing.T) {
 		},
 	}
 
+	gw := testGateway("gw", "infra", 80, gwapiv1.HTTPProtocolType, "10.0.0.1")
+
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route).
+		WithObjects(route, gw).
 		Build()
 
 	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "gw", Namespace: "infra"})
@@ -585,6 +655,7 @@ func TestHTTPRouteDiscoverySkipsNonServiceBackendRefs(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"pool.example.com"},
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{
 					{Name: "gw", Namespace: ptr.To(gwapiv1.Namespace("infra"))},
@@ -610,9 +681,11 @@ func TestHTTPRouteDiscoverySkipsNonServiceBackendRefs(t *testing.T) {
 		},
 	}
 
+	gw := testGateway("gw", "infra", 80, gwapiv1.HTTPProtocolType, "10.0.0.1")
+
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route).
+		WithObjects(route, gw).
 		Build()
 
 	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "gw", Namespace: "infra"})
@@ -631,6 +704,7 @@ func TestHTTPRouteDiscoveryContextOverride(t *testing.T) {
 	routeGW1 := &gwapiv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{Name: "route-gw1", Namespace: "default"},
 		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"svc-1.example.com"},
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{
 					{Name: "gw-1", Namespace: ptr.To(gwapiv1.Namespace("infra"))},
@@ -654,6 +728,7 @@ func TestHTTPRouteDiscoveryContextOverride(t *testing.T) {
 	routeGW2 := &gwapiv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{Name: "route-gw2", Namespace: "default"},
 		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"svc-2.example.com"},
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{
 					{Name: "gw-2", Namespace: ptr.To(gwapiv1.Namespace("infra"))},
@@ -674,9 +749,12 @@ func TestHTTPRouteDiscoveryContextOverride(t *testing.T) {
 		},
 	}
 
+	gw1 := testGateway("gw-1", "infra", 80, gwapiv1.HTTPProtocolType, "10.0.0.1")
+	gw2 := testGateway("gw-2", "infra", 80, gwapiv1.HTTPProtocolType, "10.0.0.2")
+
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(routeGW1, routeGW2).
+		WithObjects(routeGW1, routeGW2, gw1, gw2).
 		Build()
 
 	d := NewHTTPRouteDiscovery(k8sClient, GatewayTarget{Name: "gw-1", Namespace: "infra"})
@@ -759,4 +837,34 @@ func TestGatewayHeaderMiddleware(t *testing.T) {
 			t.Fatal("expected no GatewayTarget with only name header")
 		}
 	})
+}
+
+func TestQueryBackendSetsHostHeader(t *testing.T) {
+	var receivedHost string
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHost = r.Host
+		w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	defer backend.Close()
+
+	u, _ := parseURL(backend.URL)
+	discovery := NewStaticDiscovery([]Backend{
+		{Name: "svc", Namespace: "ns", URL: u, Host: "my-model.example.com", Ready: true},
+	})
+
+	agg := NewAggregator(discovery)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+
+	_, _, err := agg.FanOut(req.Context(), req, "/v1/models", MergeModelsResponses)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedHost != "my-model.example.com" {
+		t.Fatalf("expected Host header my-model.example.com, got %q", receivedHost)
+	}
+}
+
+func parseURL(s string) (*url.URL, error) {
+	return url.Parse(s)
 }

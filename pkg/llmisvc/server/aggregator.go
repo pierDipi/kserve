@@ -160,6 +160,10 @@ func (a *Aggregator) queryBackend(ctx context.Context, incomingReq *http.Request
 		return BackendResponse{Backend: backend, Err: err}
 	}
 
+	if backend.Host != "" {
+		req.Host = backend.Host
+	}
+
 	for _, h := range a.ForwardHeaders {
 		if v := incomingReq.Header.Get(h); v != "" {
 			req.Header.Set(h, v)
